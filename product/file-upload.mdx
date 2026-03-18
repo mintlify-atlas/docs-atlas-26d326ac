@@ -78,8 +78,8 @@ Send the file in the `file` form field. Optionally include `chunkingConfig` as a
 {
   "sessionId": "abc-123",
   "sourceType": "file",
-  "sourceUrl": "upload://document.pdf",
-  "status": "created",
+  "sourceUrl": "file://document.pdf",
+  "status": "DRAFT",
   "createdAt": "2025-01-15T10:30:00.000Z"
 }
 ```
@@ -93,11 +93,11 @@ Send the file in the `file` form field. Optionally include `chunkingConfig` as a
 </ResponseField>
 
 <ResponseField name="sourceUrl" type="string">
-  Set to `upload://<original-filename>` for tracking and lineage purposes.
+  Internal file reference used for lineage tracking.
 </ResponseField>
 
 <ResponseField name="status" type="string">
-  Always `created` immediately after successful upload.
+  Always `DRAFT` immediately after successful upload.
 </ResponseField>
 
 <ResponseField name="createdAt" type="string">

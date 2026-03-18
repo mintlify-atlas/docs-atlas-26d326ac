@@ -42,6 +42,27 @@ cp .env.example .env
 |----------|----------|---------|-------------|
 | `OPENAI_API_KEY` | Yes | — | OpenAI API key used for LLM chunking, embeddings, and the agent |
 
+### Session
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SESSION_TTL` | No | `86400` | Draft session TTL in seconds (default: 24 hours). Sessions are deleted from Redis after this period. |
+
+### Web ingestion
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `WEB_FETCH_TIMEOUT` | No | `30000` | HTTP request timeout for web ingestion in milliseconds |
+| `WEB_FETCH_USER_AGENT` | No | `KMS-RAG Bot/1.0` | User-Agent header sent when fetching web pages |
+| `WEB_MAX_CONTENT_LENGTH` | No | `10485760` | Maximum response size in bytes (default: 10 MB) |
+
+### Manual ingestion
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MANUAL_MAX_CONTENT_LENGTH` | No | `102400` | Maximum manual text size in bytes (default: 100 KB) |
+| `MANUAL_MIN_CONTENT_LENGTH` | No | `1` | Minimum manual text size in bytes |
+
 ### Rate limiting
 
 | Variable | Required | Default | Description |
@@ -72,7 +93,6 @@ These variables tune the chunking LLM call. The defaults work for most cases.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SQLITE_PATH` | No | `data/ragler.db` | File path for the SQLite database used to persist settings |
-| `SESSION_TTL` | No | `86400` | Draft session TTL in seconds (default: 24 hours) |
 
 ## Feature flags
 
@@ -145,6 +165,18 @@ OPENAI_API_KEY=your-openai-api-key-here
 # Rate Limiting
 THROTTLE_TTL=60000
 THROTTLE_LIMIT=100
+
+# Session (draft workspace TTL)
+# SESSION_TTL=86400
+
+# Web Ingestion (optional - defaults provided)
+# WEB_FETCH_TIMEOUT=30000
+# WEB_FETCH_USER_AGENT=KMS-RAG Bot/1.0
+# WEB_MAX_CONTENT_LENGTH=10485760
+
+# Manual Ingestion (optional - defaults provided)
+# MANUAL_MAX_CONTENT_LENGTH=102400
+# MANUAL_MIN_CONTENT_LENGTH=1
 
 # LLM Chunking (optional - defaults provided)
 # LLM_CHUNKING_TIMEOUT=60000

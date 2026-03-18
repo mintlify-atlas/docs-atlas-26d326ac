@@ -29,7 +29,7 @@ Semantic search across a specific collection. Returns relevant chunks with conte
 | `query` | string | Yes | Natural language search query |
 | `collection_id` | string (UUID) | Yes | Collection to search |
 | `limit` | number | No | Results to return (1–100, default 10) |
-| `filters.source_types` | string[] | No | Filter by source: `web`, `manual` |
+| `filters.source_types` | string[] | No | Filter by source: `web`, `manual`, `file` |
 | `filters.chunk_types` | string[] | No | Filter by type: `knowledge`, `navigation`, `table_row`, `glossary`, `faq`, `code` |
 | `filters.exclude_navigation` | boolean | No | Exclude navigation chunks (default: `true`) |
 | `filters.tags` | string[] | No | Filter by LLM-extracted tags |

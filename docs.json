@@ -101,6 +101,7 @@
               "api/session",
               "api/search",
               "api/health",
+              "api/settings",
               "api/mcp"
             ]
           }

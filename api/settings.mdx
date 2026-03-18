@@ -1,0 +1,194 @@
+---
+title: Settings
+description: Configure the AI agent model and manage feature flags via the REST API.
+---
+
+The settings endpoints let you read and update the AI agent configuration and feature flags at runtime — without restarting the backend.
+
+**Base path:** `/api/settings`
+
+---
+
+## Agent settings
+
+### Get agent settings
+
+```http
+GET /api/settings/agent
+```
+
+Returns the current AI agent model and API key configuration.
+
+```bash
+curl http://localhost:3000/api/settings/agent
+```
+
+**Response `200`**
+
+```json
+{
+  "modelName": "gpt-4.1",
+  "hasCustomApiKey": false,
+  "maskedApiKey": null
+}
+```
+
+<ResponseField name="modelName" type="string">
+  Currently active model ID (e.g. `gpt-4.1`, `gpt-4o`).
+</ResponseField>
+
+<ResponseField name="hasCustomApiKey" type="boolean">
+  Whether a custom API key overrides the environment-level `OPENAI_API_KEY`.
+</ResponseField>
+
+<ResponseField name="maskedApiKey" type="string | null">
+  Partially masked version of the custom API key (e.g. `sk-...abc1`). `null` when no custom key is set.
+</ResponseField>
+
+---
+
+### Update agent settings
+
+```http
+PATCH /api/settings/agent
+```
+
+Update the agent model or override the OpenAI API key used by the agent.
+
+<ParamField body="modelName" type="string">
+  Model ID to use. Must be one of the available model IDs returned by `GET /api/settings/agent/models`.
+</ParamField>
+
+<ParamField body="apiKey" type="string | null">
+  Custom OpenAI API key. Pass `null` to remove the override and fall back to the environment variable.
+</ParamField>
+
+```bash
+curl -X PATCH http://localhost:3000/api/settings/agent \
+  -H "Content-Type: application/json" \
+  -d '{"modelName": "gpt-4.1-mini"}'
+```
+
+**Response `200`** — updated agent settings object (same shape as GET).
+
+---
+
+### List available models
+
+```http
+GET /api/settings/agent/models
+```
+
+Returns all model IDs that can be selected for the agent.
+
+```bash
+curl http://localhost:3000/api/settings/agent/models
+```
+
+**Response `200`**
+
+```json
+{
+  "models": [
+    { "id": "gpt-5", "name": "GPT-5", "description": "Best for complex coding & agentic tasks" },
+    { "id": "gpt-5-mini", "name": "GPT-5 Mini", "description": "Fast & cost-efficient" },
+    { "id": "gpt-5-nano", "name": "GPT-5 Nano", "description": "Fastest in GPT-5 family" },
+    { "id": "o3", "name": "o3", "description": "Powerful reasoning — math, science, code" },
+    { "id": "o3-mini", "name": "o3 Mini", "description": "Small reasoning model" },
+    { "id": "o4-mini", "name": "o4 Mini", "description": "Fast reasoning — visual & coding" },
+    { "id": "gpt-4.1", "name": "GPT-4.1", "description": "Strong non-reasoning model" },
+    { "id": "gpt-4.1-mini", "name": "GPT-4.1 Mini", "description": "Balanced performance & cost" },
+    { "id": "gpt-4.1-nano", "name": "GPT-4.1 Nano", "description": "Most affordable in 4.1 family" },
+    { "id": "gpt-4o", "name": "GPT-4o", "description": "Multimodal (legacy)" },
+    { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "description": "Affordable multimodal (legacy)" }
+  ]
+}
+```
+
+---
+
+## Feature flags
+
+Feature flags enable or disable major capabilities at runtime. They can also be toggled in the **Settings → Features** UI.
+
+### Get feature flags
+
+```http
+GET /api/settings/features
+```
+
+```bash
+curl http://localhost:3000/api/settings/features
+```
+
+**Response `200`**
+
+```json
+{
+  "webIngest": true,
+  "fileIngest": true,
+  "agent": true
+}
+```
+
+<ResponseField name="webIngest" type="boolean">
+  Controls `POST /api/ingest/web`. When `false`, web URL ingestion returns `403 Forbidden`.
+</ResponseField>
+
+<ResponseField name="fileIngest" type="boolean">
+  Controls `POST /api/ingest/file`. When `false`, file upload ingestion returns `403 Forbidden`.
+</ResponseField>
+
+<ResponseField name="agent" type="boolean">
+  Controls all `/api/collections/:id/agent/*` endpoints. When `false`, agent endpoints return `403 Forbidden`.
+</ResponseField>
+
+---
+
+### Update feature flags
+
+```http
+PATCH /api/settings/features
+```
+
+Toggle one or more feature flags. Only include the flags you want to change.
+
+<ParamField body="webIngest" type="boolean">
+  Enable or disable web URL ingestion.
+</ParamField>
+
+<ParamField body="fileIngest" type="boolean">
+  Enable or disable file upload ingestion.
+</ParamField>
+
+<ParamField body="agent" type="boolean">
+  Enable or disable the AI agent.
+</ParamField>
+
+```bash
+curl -X PATCH http://localhost:3000/api/settings/features \
+  -H "Content-Type: application/json" \
+  -d '{"agent": false}'
+```
+
+**Response `200`** — full updated feature flags object.
+
+<Note>
+  Runtime feature flag changes take effect immediately but are stored in memory. They reset to the environment variable defaults (`FEATURE_*`) on backend restart. To make changes permanent, set the corresponding env vars in `backend/.env`.
+</Note>
+
+---
+
+### Reset feature flags
+
+```http
+DELETE /api/settings/features
+```
+
+Resets all feature flags to their defaults (as defined by the `FEATURE_*` environment variables).
+
+```bash
+curl -X DELETE http://localhost:3000/api/settings/features
+```
+
+**Response `200`** — feature flags object after reset.
