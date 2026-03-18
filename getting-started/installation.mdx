@@ -1,0 +1,209 @@
+---
+title: Installation
+description: Get RAGler running locally — from cloning the repo to verifying the backend API and starting the frontend.
+---
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed and available:
+
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| Node.js | 20+ | Required for both backend and frontend |
+| pnpm | 9+ | Package manager used throughout the project |
+| Docker | latest | Runs Redis and Qdrant |
+| OpenAI API key | — | Required for LLM chunking and embeddings |
+
+## Local setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/scrobot/ragler.git
+    cd ragler
+    ```
+  </Step>
+
+  <Step title="Start Redis and Qdrant">
+    From the repo root, start the infrastructure services:
+
+    ```bash
+    docker compose up -d redis qdrant
+    ```
+
+    This starts:
+    - **Redis** on port `6379` — stores draft sessions
+    - **Qdrant** on port `6333` — stores published vector chunks
+
+    Verify both are running:
+
+    ```bash
+    docker compose ps
+    ```
+  </Step>
+
+  <Step title="Install backend dependencies and configure environment">
+    ```bash
+    cd backend
+    pnpm install
+    cp .env.example .env
+    ```
+
+    Open `.env` and set the required variables:
+
+    ```env
+    OPENAI_API_KEY=sk-your-key-here
+    REDIS_HOST=localhost
+    REDIS_PORT=6379
+    QDRANT_URL=http://localhost:6333
+    ```
+
+    <Note>
+      `OPENAI_API_KEY` is the only value you must supply. The Redis and Qdrant defaults match what `docker compose up -d redis qdrant` starts on your machine.
+    </Note>
+  </Step>
+
+  <Step title="Start the backend">
+    ```bash
+    pnpm start:dev
+    ```
+
+    The backend starts with hot reload on port `3000`. You should see NestJS boot logs ending with a line like:
+
+    ```
+    [NestApplication] Nest application successfully started
+    ```
+  </Step>
+
+  <Step title="Verify health endpoints">
+    Confirm the backend is running and all dependencies are reachable:
+
+    <CodeGroup>
+
+    ```bash Liveness
+    curl http://localhost:3000/api/health/liveness
+    ```
+
+    ```bash Readiness
+    curl http://localhost:3000/api/health/readiness
+    ```
+
+    </CodeGroup>
+
+    Expected responses:
+
+    <CodeGroup>
+
+    ```json Liveness response
+    { "status": "ok" }
+    ```
+
+    ```json Readiness response
+    { "status": "ok", "info": { "redis": { "status": "up" }, "qdrant": { "status": "up" } } }
+    ```
+
+    </CodeGroup>
+
+    You can also browse the Swagger UI at `http://localhost:3000/api/docs`.
+  </Step>
+
+  <Step title="Start the frontend">
+    Open a new terminal and run:
+
+    ```bash
+    cd frontend
+    pnpm install
+    pnpm dev
+    ```
+
+    The frontend starts at `http://localhost:3000`.
+
+    <Warning>
+      When running the frontend in development mode alongside the backend, both default to port `3000`. Either change `PORT` in `backend/.env` (for example to `3010`) or adjust the frontend's `NEXT_PUBLIC_API_URL` accordingly.
+    </Warning>
+  </Step>
+
+  <Step title="(Optional) Verify the MCP endpoint">
+    RAGler includes a built-in Model Context Protocol server at `/mcp`. Verify it responds:
+
+    ```bash
+    curl -X POST http://localhost:3000/mcp \
+      -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+    ```
+
+    A successful response lists all available MCP tools.
+  </Step>
+</Steps>
+
+## Docker deployment
+
+For a production-style setup, Docker Compose runs all services — backend, frontend, Redis, and Qdrant — with a single command.
+
+<Tabs>
+  <Tab title="Pre-built images (recommended)">
+    Pulls images from `ghcr.io/scrobot/ragler` — no build step required.
+
+    ```bash
+    git clone https://github.com/scrobot/ragler.git
+    cd ragler
+
+    # Set your OpenAI key
+    echo "OPENAI_API_KEY=sk-your-key-here" > .env
+
+    # Start everything
+    docker compose up -d
+    ```
+
+    Once running, all services are available at:
+
+    | Service | URL | Description |
+    |---------|-----|-------------|
+    | Frontend | `http://localhost:3000` | RAGler UI |
+    | Backend API | `http://localhost:3010/api/docs` | API + Swagger |
+    | Qdrant dashboard | `http://localhost:6333/dashboard` | Vector DB UI |
+    | Redis | `localhost:6379` | Session store |
+  </Tab>
+  <Tab title="Build from source">
+    Builds Docker images locally before starting.
+
+    ```bash
+    git clone https://github.com/scrobot/ragler.git
+    cd ragler
+    echo "OPENAI_API_KEY=sk-your-key-here" > .env
+    docker compose up -d --build
+    ```
+  </Tab>
+</Tabs>
+
+### Debug tools
+
+To launch RedisInsight for inspecting Redis session data:
+
+```bash
+docker compose --profile debug up -d
+```
+
+RedisInsight is available at `http://localhost:5540`.
+
+### Stopping and cleaning up
+
+```bash
+docker compose down        # stop containers, keep volumes
+docker compose down -v     # stop containers and delete all data volumes
+```
+
+<Warning>
+  `docker compose down -v` permanently deletes all stored sessions and published vector data. Only use it when you want a clean slate.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/getting-started/configuration">
+    Review all environment variables and feature flags
+  </Card>
+  <Card title="Your first collection" icon="folder-plus" href="/getting-started/first-collection">
+    Walk through the complete ingest-to-publish workflow
+  </Card>
+</CardGroup>

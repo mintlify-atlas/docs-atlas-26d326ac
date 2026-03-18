@@ -1,0 +1,176 @@
+---
+title: Search
+description: Vector similarity search across published knowledge collections.
+---
+
+The search endpoint performs semantic vector search against published chunks in Qdrant. It accepts a natural language query and returns ranked results with full chunk metadata.
+
+**Base path:** `/api/search`
+
+**Required header:** `X-User-ID`
+
+---
+
+## Search knowledge collections
+
+```http
+POST /api/search
+```
+
+<ParamField body="query" type="string" required>
+  Natural language search query. Min 1 character.
+</ParamField>
+
+<ParamField body="collectionId" type="string" required>
+  UUID of the collection to search.
+</ParamField>
+
+<ParamField body="limit" type="number">
+  Maximum number of results to return. Min 1, max 100. Default `10`.
+</ParamField>
+
+<ParamField body="filters" type="object">
+  Optional filters to narrow the result set.
+
+  <Expandable title="Filter fields">
+    <ParamField body="filters.source_types" type="array">
+      Filter by source type. Values: `web` | `manual` | `file`.
+    </ParamField>
+    <ParamField body="filters.chunk_types" type="array">
+      Filter by chunk type. Values: `knowledge` | `navigation` | `table_row` | `glossary` | `faq` | `code`.
+    </ParamField>
+    <ParamField body="filters.exclude_navigation" type="boolean">
+      When `true`, navigation-type chunks are excluded from results. Default `true`.
+    </ParamField>
+    <ParamField body="filters.tags" type="array">
+      Filter by LLM-extracted tags. Returns chunks that have all specified tags.
+    </ParamField>
+    <ParamField body="filters.date_range" type="object">
+      Filter by modification date.
+      <Expandable title="date_range fields">
+        <ParamField body="filters.date_range.from" type="string">
+          ISO-8601 datetime lower bound (inclusive).
+        </ParamField>
+        <ParamField body="filters.date_range.to" type="string">
+          ISO-8601 datetime upper bound (inclusive).
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<CodeGroup>
+```bash Basic search
+curl -X POST http://localhost:3000/api/search \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "query": "How does authentication work?",
+    "collectionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+  }'
+```
+
+```bash Filtered search
+curl -X POST http://localhost:3000/api/search \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "query": "authentication and authorization",
+    "collectionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "limit": 5,
+    "filters": {
+      "chunk_types": ["knowledge", "faq"],
+      "source_types": ["web"],
+      "exclude_navigation": true,
+      "tags": ["security", "authentication"]
+    }
+  }'
+```
+</CodeGroup>
+
+**Response `200`**
+
+```json
+{
+  "results": [
+    {
+      "id": "chunk-uuid",
+      "score": 0.923,
+      "content": "The API uses an X-User-ID header for user identification...",
+      "doc": {
+        "url": "https://docs.example.com/auth",
+        "title": "Authentication Guide",
+        "source_type": "web",
+        "revision": 1
+      },
+      "chunk": {
+        "type": "knowledge",
+        "heading_path": ["Authentication", "Overview"],
+        "section": "Authentication > Overview",
+        "lang": "en"
+      },
+      "tags": ["authentication", "security", "api"]
+    }
+  ],
+  "total": 1,
+  "query": "How does authentication work?"
+}
+```
+
+<Expandable title="Response fields">
+  <ResponseField name="results" type="array">
+    Ranked list of matching chunks.
+  </ResponseField>
+  <ResponseField name="results[].id" type="string">
+    Chunk identifier.
+  </ResponseField>
+  <ResponseField name="results[].score" type="number">
+    Cosine similarity score (0–1). Higher is more relevant.
+  </ResponseField>
+  <ResponseField name="results[].content" type="string">
+    Chunk text content.
+  </ResponseField>
+  <ResponseField name="results[].doc" type="object">
+    Document-level metadata.
+  </ResponseField>
+  <ResponseField name="results[].doc.url" type="string">
+    Source URL.
+  </ResponseField>
+  <ResponseField name="results[].doc.title" type="string | null">
+    Document title.
+  </ResponseField>
+  <ResponseField name="results[].doc.source_type" type="string">
+    One of `web` | `manual` | `file`.
+  </ResponseField>
+  <ResponseField name="results[].doc.revision" type="number | string">
+    Document version.
+  </ResponseField>
+  <ResponseField name="results[].chunk" type="object">
+    Chunk-level metadata.
+  </ResponseField>
+  <ResponseField name="results[].chunk.type" type="string">
+    Chunk type: `knowledge` | `navigation` | `table_row` | `glossary` | `faq` | `code`.
+  </ResponseField>
+  <ResponseField name="results[].chunk.heading_path" type="array">
+    Heading hierarchy path within the source document.
+  </ResponseField>
+  <ResponseField name="results[].chunk.section" type="string | null">
+    Formatted section string (e.g. `Introduction > Overview`).
+  </ResponseField>
+  <ResponseField name="results[].chunk.lang" type="string">
+    Detected language: `en` | `ru` | `mixed`.
+  </ResponseField>
+  <ResponseField name="results[].tags" type="array">
+    LLM-extracted topic tags.
+  </ResponseField>
+  <ResponseField name="total" type="number">
+    Total number of results returned.
+  </ResponseField>
+  <ResponseField name="query" type="string">
+    Echo of the original query string.
+  </ResponseField>
+</Expandable>
+
+**Response `400`** — invalid request (missing query, invalid collection ID format).
+
+**Response `404`** — collection not found.

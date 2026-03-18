@@ -1,0 +1,137 @@
+---
+title: File upload
+description: Upload PDF, DOCX, DOC, TXT, MD, CSV, HTML, or HTM files to create a draft session for chunking and publishing.
+---
+
+The file upload endpoint accepts documents via `multipart/form-data` and extracts their text content into a new draft session. Each parser handles format-specific extraction so the resulting session content is clean, structured text ready for chunking.
+
+## Endpoint
+
+```
+POST /api/ingest/file
+```
+
+**Content-Type:** `multipart/form-data`  
+**Required header:** `X-User-ID: <your-user-id>`  
+**Max file size:** 10 MB
+
+<Note>
+  The `fileIngest` feature flag must be enabled. Set `FEATURE_FILE_INGEST=true` in your environment to activate this endpoint.
+</Note>
+
+## Supported formats
+
+| Format | Extensions | Parser | Notes |
+|--------|-----------|--------|-------|
+| PDF | `.pdf` | pdf-parse | Text-based PDFs only. Scanned PDFs without embedded text will produce empty content. |
+| Word (modern) | `.docx` | mammoth | Extracts raw text from Office Open XML format. |
+| Word (legacy) | `.doc` | mammoth | Extracts raw text from legacy binary format. |
+| Plain text | `.txt` | UTF-8 reader | Read as-is with whitespace normalisation. |
+| Markdown | `.md` | UTF-8 reader | Read as-is; Markdown syntax is preserved for LLM chunking. |
+| CSV | `.csv` | UTF-8 reader | Each row is treated as plain text. |
+| HTML | `.html`, `.htm` | cheerio | Scripts and styles stripped; headings, lists, and tables converted to readable text. Confluence storage format tags are unwrapped. |
+| XHTML | `.xhtml` | cheerio | Same processing as HTML. |
+
+<Warning>
+  Scanned PDFs without embedded OCR text will result in an empty content error. Use a PDF with selectable text, or pre-process the file with an OCR tool before uploading.
+</Warning>
+
+## Request
+
+Send the file in the `file` form field. Optionally include `chunkingConfig` as a JSON string in a separate form field.
+
+<Tabs>
+  <Tab title="Basic upload">
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/file \
+      -H "X-User-ID: user-1" \
+      -F "file=@./document.pdf"
+    ```
+  </Tab>
+  <Tab title="With chunking config">
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/file \
+      -H "X-User-ID: user-1" \
+      -F "file=@./document.pdf" \
+      -F 'chunkingConfig={"method":"character","chunkSize":500,"overlap":100}'
+    ```
+  </Tab>
+  <Tab title="Markdown file">
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/file \
+      -H "X-User-ID: user-1" \
+      -F "file=@./README.md"
+    ```
+  </Tab>
+  <Tab title="HTML file">
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/file \
+      -H "X-User-ID: user-1" \
+      -F "file=@./export.html"
+    ```
+  </Tab>
+</Tabs>
+
+## Response
+
+```json
+{
+  "sessionId": "abc-123",
+  "sourceType": "file",
+  "sourceUrl": "upload://document.pdf",
+  "status": "created",
+  "createdAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+<ResponseField name="sessionId" type="string">
+  Unique ID of the created draft session.
+</ResponseField>
+
+<ResponseField name="sourceType" type="string">
+  Always `file` for file uploads.
+</ResponseField>
+
+<ResponseField name="sourceUrl" type="string">
+  Set to `upload://<original-filename>` for tracking and lineage purposes.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Always `created` immediately after successful upload.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of session creation.
+</ResponseField>
+
+## How parsing works
+
+Each parser produces clean text before the session is stored:
+
+- **PDF**: `pdf-parse` extracts the embedded text layer. Pages are concatenated and trimmed.
+- **DOCX/DOC**: `mammoth` extracts raw text from the document body, discarding styles and comments.
+- **TXT/MD/CSV**: The file buffer is read as UTF-8 and trimmed.
+- **HTML/HTM/XHTML**: `cheerio` processes the markup — `<script>` and `<style>` tags are removed, headings are converted to Markdown-style prefixes, list items become bullets, table rows become pipe-delimited text, and image alt text is preserved as `[Image: alt]`. Confluence namespace tags (`ac:*`, `ri:*`) are unwrapped.
+
+The extracted text is stored in the session's `rawContent` field (for web sources) or the session body. You can inspect it with `GET /api/session/:id`.
+
+## Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Unsupported file type` | Extension not in the supported list | Convert the file to a supported format |
+| `File too large` | File exceeds 10 MB | Compress or split the file before uploading |
+| `PDF contains no extractable text` | Scanned PDF without embedded text | Use a PDF with selectable text or pre-process with OCR |
+| `DOCX contains no extractable text` | Document has no text body | Check the file opens correctly in Word |
+| `Text file is empty` | Empty file uploaded | Ensure the file has content before uploading |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="list-check" href="/product/sessions">
+    Edit and refine the chunks generated from your uploaded file
+  </Card>
+  <Card title="Configurable chunking" icon="sliders" href="/product/configurable-chunking">
+    Control how the extracted text is split into chunks
+  </Card>
+</CardGroup>

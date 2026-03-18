@@ -1,0 +1,243 @@
+---
+title: Troubleshooting
+description: Common setup, connectivity, and workflow errors in RAGler, with step-by-step solutions.
+---
+
+## Backend startup
+
+<AccordionGroup>
+  <Accordion title="Environment validation failed">
+    The backend validates all required environment variables on startup. If any are missing or malformed, it exits immediately.
+
+    **Symptoms:** The backend process exits right after startup with a message like `Environment validation failed`.
+
+    **Solution:**
+
+    1. Open `backend/.env` and confirm these three variables are set:
+
+       ```env
+       OPENAI_API_KEY=sk-your-key-here
+       REDIS_HOST=localhost
+       QDRANT_URL=http://localhost:6333
+       ```
+
+    2. Ensure `QDRANT_URL` starts with `http://` or `https://` and includes the port.
+
+    3. Restart the backend after saving:
+
+       ```bash
+       pnpm start:dev
+       ```
+  </Accordion>
+
+  <Accordion title="Port 3000 is already in use">
+    **Symptoms:** The backend fails to bind to port `3000`, often because the frontend development server is running on the same port.
+
+    **Solution:** Change the backend port in `backend/.env`:
+
+    ```env
+    PORT=3010
+    ```
+
+    Then update the frontend's API URL to match:
+
+    ```env
+    NEXT_PUBLIC_API_URL=http://localhost:3010/api
+    ```
+
+    Restart both services.
+  </Accordion>
+</AccordionGroup>
+
+## Redis and Qdrant connectivity
+
+<AccordionGroup>
+  <Accordion title="Readiness check returns unhealthy">
+    **Symptoms:** `GET /api/health/readiness` returns a non-`ok` status, or the `redis` / `qdrant` fields show `down`.
+
+    **Solution:**
+
+    1. Check that the Docker containers are running:
+
+       ```bash
+       docker compose ps
+       ```
+
+       Both `redis` and `qdrant` should show `running`.
+
+    2. If either is stopped, start it:
+
+       ```bash
+       docker compose up -d redis qdrant
+       ```
+
+    3. Confirm port mappings are correct — Redis on `6379`, Qdrant on `6333`.
+
+    4. Verify `REDIS_HOST` and `QDRANT_URL` in `backend/.env` match where the containers are reachable. For local development, use `localhost`.
+  </Accordion>
+
+  <Accordion title="Redis connection refused">
+    **Symptoms:** Backend logs show `ECONNREFUSED 127.0.0.1:6379` or similar.
+
+    **Solution:**
+
+    ```bash
+    # Check if the Redis container exists
+    docker compose ps redis
+
+    # Start it if missing
+    docker compose up -d redis
+
+    # Test connectivity directly
+    docker compose exec redis redis-cli ping
+    # Expected output: PONG
+    ```
+
+    If you changed `REDIS_PORT`, update the value in `backend/.env` to match.
+  </Accordion>
+
+  <Accordion title="Qdrant connection refused or timeout">
+    **Symptoms:** Backend logs show errors connecting to `http://localhost:6333`, or `GET /api/health/readiness` shows `qdrant: down`.
+
+    **Solution:**
+
+    ```bash
+    # Check if the Qdrant container exists
+    docker compose ps qdrant
+
+    # Start it if missing
+    docker compose up -d qdrant
+
+    # Verify Qdrant is responding
+    curl http://localhost:6333/healthz
+    # Expected: ok
+    ```
+
+    Ensure `QDRANT_URL` in `backend/.env` uses the full URL format: `http://localhost:6333`.
+  </Accordion>
+</AccordionGroup>
+
+## Authentication errors
+
+<AccordionGroup>
+  <Accordion title="401 Unauthorized or 403 Forbidden">
+    **Symptoms:** API calls return `401` or `403` responses.
+
+    **Solution:** All RAGler API endpoints require the `X-User-ID` header. Ensure it is present in every request:
+
+    ```bash
+    curl http://localhost:3000/api/collections \
+      -H 'X-User-ID: demo@ragler.ai'
+    ```
+
+    The value can be any non-empty string in development. In production, use a consistent identifier (email, UUID, or username) to scope sessions correctly.
+  </Accordion>
+</AccordionGroup>
+
+## Ingest failures
+
+<AccordionGroup>
+  <Accordion title="Ingest fails with OpenAI error">
+    **Symptoms:** The ingest or chunk generation request returns an error referencing the OpenAI API, or you see `LLM chunking failed` in backend logs.
+
+    **Solution:**
+
+    1. Verify `OPENAI_API_KEY` is set in `backend/.env` and is a valid, active key.
+
+    2. Check network connectivity from the backend to `api.openai.com`.
+
+    3. If the content is very long, the request may exceed the chunking limit. Check `LLM_CHUNKING_MAX_CONTENT_LENGTH` (default: `30000` characters) and trim the input if needed.
+  </Accordion>
+
+  <Accordion title="Session not found after ingest">
+    **Symptoms:** After a successful ingest response, subsequent requests to `/api/session/:sessionId` return `404`.
+
+    **Solution:**
+
+    1. Confirm you are using the exact `sessionId` returned in the ingest response.
+
+    2. Sessions expire after `SESSION_TTL` seconds (default: `86400` — 24 hours). If the session expired, repeat the ingest.
+
+    3. Verify Redis is still running:
+
+       ```bash
+       docker compose ps redis
+       ```
+  </Accordion>
+
+  <Accordion title="Web ingest or file ingest endpoint not available">
+    **Symptoms:** `POST /api/ingest/web` or `POST /api/ingest/file` returns `404` or `Feature disabled`.
+
+    **Solution:** The corresponding feature flag is set to `false`. Check `backend/.env`:
+
+    ```env
+    FEATURE_WEB_INGEST=true
+    FEATURE_FILE_INGEST=true
+    ```
+
+    Set the flag to `true` and restart the backend.
+  </Accordion>
+</AccordionGroup>
+
+## Publish and search issues
+
+<AccordionGroup>
+  <Accordion title="Publish fails with invalid collection ID">
+    **Symptoms:** The publish request returns an error like `Invalid collection ID format` or `Collection not found`.
+
+    **Solution:**
+
+    1. Confirm the `targetCollectionId` is a valid UUID from `GET /api/collections`:
+
+       ```bash
+       curl http://localhost:3000/api/collections \
+         -H 'X-User-ID: demo@ragler.ai'
+       ```
+
+    2. Ensure the collection was created before publishing — you cannot publish to a collection that does not exist.
+  </Accordion>
+
+  <Accordion title="Search returns no results">
+    **Symptoms:** `POST /api/search` returns an empty results array after publishing.
+
+    **Solution:**
+
+    1. Confirm the publish response included `publishedChunks > 0`.
+
+    2. Verify you are querying the correct `collectionId`.
+
+    3. Try a broader or simpler query — semantic search depends on embedding similarity, so very specific or unusual phrasing may not match.
+
+    4. Check that Qdrant is healthy and the collection exists in the Qdrant dashboard at `http://localhost:6333/dashboard`.
+  </Accordion>
+
+  <Accordion title="Publish fails with session in wrong state">
+    **Symptoms:** The publish request returns an error like `Session must be in preview state to publish`.
+
+    **Solution:** You must call the preview endpoint before publishing:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/session/:sessionId/preview \
+      -H 'X-User-ID: demo@ragler.ai'
+    ```
+
+    Then retry the publish.
+  </Accordion>
+</AccordionGroup>
+
+## Still stuck?
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Review the setup steps and Docker commands
+  </Card>
+  <Card title="Configuration" icon="gear" href="/getting-started/configuration">
+    Check all environment variable requirements
+  </Card>
+  <Card title="API reference" icon="code" href="/api/overview">
+    See full request and response schemas for every endpoint
+  </Card>
+  <Card title="GitHub issues" icon="github" href="https://github.com/scrobot/ragler/issues">
+    Report a bug or search for known issues
+  </Card>
+</CardGroup>

@@ -1,0 +1,132 @@
+---
+title: Security
+description: Authentication model, rate limiting, security headers, and CORS configuration for RAGler.
+---
+
+## Current security model
+
+RAGler is designed as an internal platform. The baseline security model uses a lightweight identity header and HTTP hardening middleware. It does not include a full IAM system or token-based authentication in the current release.
+
+<Warning>
+  Do not expose RAGler directly to the public internet without adding an authentication and authorisation layer in front of it. See [Operational recommendations](#operational-recommendations) below.
+</Warning>
+
+## Request identity: `X-User-ID` header
+
+User identity is propagated via the `X-User-ID` HTTP request header. Controllers read this header and pass the value to service methods where it is used for audit fields (`last_modified_by`, `created_by`, logged `userId`).
+
+```http
+POST /api/ingest/web HTTP/1.1
+X-User-ID: alice@example.com
+Content-Type: application/json
+
+{ "url": "https://example.com/page" }
+```
+
+There is no verification of this header value. A reverse proxy or API gateway in front of RAGler is responsible for validating the caller's identity and injecting a trusted `X-User-ID`.
+
+## Helmet security headers
+
+The application applies [Helmet](https://helmetjs.github.io/) globally via `app.use(helmet())` in `main.ts`. Helmet sets the following HTTP response headers by default:
+
+| Header | Value / Effect |
+|--------|----------------|
+| `Content-Security-Policy` | Restrictive CSP to mitigate XSS |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `SAMEORIGIN` |
+| `Strict-Transport-Security` | Enforces HTTPS (when TLS is active) |
+| `X-XSS-Protection` | `0` (delegates to CSP) |
+| `Referrer-Policy` | `no-referrer` |
+
+## CORS configuration
+
+CORS is enabled globally with an open policy suitable for internal deployments:
+
+```typescript
+app.enableCors({
+  origin:      '*',
+  methods:     'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  credentials: true,
+});
+```
+
+<Note>
+  The wildcard `origin: '*'` is appropriate for internal tooling. Restrict this to specific origins when deploying behind an ingress or reverse proxy that is reachable from the public internet.
+</Note>
+
+The MCP server (port 3100) also sets its own CORS headers:
+
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Accept, Mcp-Session-Id
+Access-Control-Expose-Headers: Mcp-Session-Id
+```
+
+## Input validation
+
+All incoming request bodies and query parameters are validated by Zod schemas via a global `ZodValidationPipe`. Invalid requests are rejected at the controller boundary before they reach any service or external dependency.
+
+```typescript
+// Applied globally in main.ts
+app.useGlobalPipes(new ZodValidationPipe());
+```
+
+Schema definitions live in `*.dto.ts` files alongside each module and use explicit, narrow types. There are no `z.any()` or `z.unknown()` schemas in request paths.
+
+## Sensitive secrets
+
+The following secrets must never appear in logs, responses, or version control:
+
+| Secret | Handling |
+|--------|----------|
+| `OPENAI_API_KEY` | Read from environment; never logged; masked to `sk-p****YzYz` in API responses via `SettingsService` |
+| User-supplied API key overrides | Stored in Redis with no TTL; masked in all responses; never logged |
+
+## Rate limiting
+
+RAGler uses `@nestjs/throttler` for route-level rate limiting. Configure limits via environment variables or the throttler module options to match your expected traffic patterns.
+
+<Tip>
+  LLM-backed endpoints (ingest, chunk generation, publish) are significantly more expensive than non-LLM endpoints. Consider applying stricter per-user rate limits to these specific routes.
+</Tip>
+
+## Error handling
+
+Unhandled exceptions are caught by `HttpExceptionFilter` and returned in a consistent JSON shape. Stack traces are not included in HTTP responses in any environment. Full error details are written to the structured log only.
+
+```json
+{
+  "statusCode": 404,
+  "message":    "Session session_abc not found",
+  "error":      "Not Found"
+}
+```
+
+## Operational recommendations
+
+<Steps>
+  <Step title="Terminate TLS at the ingress layer">
+    Run RAGler behind a reverse proxy (NGINX, Traefik, AWS ALB) that terminates TLS. The application does not manage TLS certificates.
+  </Step>
+
+  <Step title="Add authentication before internet exposure">
+    Place an authentication proxy (OAuth2 Proxy, Keycloak, API gateway) in front of RAGler. The proxy should validate the caller's identity and inject a trusted `X-User-ID` header. Remove any caller-supplied `X-User-ID` at the proxy layer before forwarding.
+  </Step>
+
+  <Step title="Restrict CORS origins">
+    Replace `origin: '*'` with an explicit allowlist of your frontend origins once you have a stable deployment URL.
+  </Step>
+
+  <Step title="Protect environment secrets">
+    Use a secrets manager (Vault, AWS Secrets Manager, Kubernetes Secrets) for `OPENAI_API_KEY`. Do not bake secrets into container images or commit them to version control.
+  </Step>
+
+  <Step title="Add structured audit logs for sensitive operations">
+    Extend the structured logging to include an audit trail for publish events and collection deletions. These operations are irreversible and should be auditable by user and timestamp.
+  </Step>
+
+  <Step title="Restrict network access to Redis and Qdrant">
+    Redis and Qdrant should not be accessible from outside the internal network. Use firewall rules or a service mesh to allow connections only from the RAGler backend.
+  </Step>
+</Steps>

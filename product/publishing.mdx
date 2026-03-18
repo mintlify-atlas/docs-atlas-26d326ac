@@ -1,0 +1,127 @@
+---
+title: Publishing
+description: Commit reviewed session chunks into a target collection using atomic replacement in Qdrant.
+---
+
+Publishing is the final step in the RAGler workflow. It atomically writes all reviewed chunks from a session into a Qdrant collection, replacing any previous content from the same source. After publishing, the chunks are immediately searchable via vector similarity.
+
+## Endpoint
+
+```
+POST /api/session/:id/publish
+```
+
+**Required header:** `X-User-ID: <your-user-id>`
+
+## Prerequisites
+
+Before calling publish:
+
+1. The session must be in `PREVIEWING` state. Call `POST /api/session/:id/preview` first.
+2. A target collection must exist. Create one with `POST /api/collections` if needed.
+3. The `targetCollectionId` must be a valid collection UUID.
+
+## Request
+
+```bash
+curl -X POST http://localhost:3000/api/session/<sessionId>/publish \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "targetCollectionId": "550e8400-e29b-41d4-a716-446655440000"
+  }'
+```
+
+<ParamField body="targetCollectionId" type="string" required>
+  The UUID of the collection to publish into. Must be a valid UUID format. The collection must already exist.
+</ParamField>
+
+## Response
+
+```json
+{
+  "sessionId": "abc-123",
+  "publishedChunks": 12,
+  "collectionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+<ResponseField name="sessionId" type="string">
+  The ID of the session that was published.
+</ResponseField>
+
+<ResponseField name="publishedChunks" type="number">
+  The number of chunks written to the collection.
+</ResponseField>
+
+<ResponseField name="collectionId" type="string">
+  The UUID of the collection that received the chunks.
+</ResponseField>
+
+## How atomic replacement works
+
+RAGler uses atomic replacement to ensure your collection is always in a consistent state:
+
+<Steps>
+  <Step title="Delete existing chunks from this source">
+    Before writing anything new, RAGler deletes all points in the Qdrant collection that share the same `source_id` as the session being published. This ensures stale chunks from a previous ingest of the same URL or file are removed.
+  </Step>
+  <Step title="Embed and upsert new chunks">
+    Each reviewed chunk is embedded using OpenAI and upserted into the Qdrant collection with its full `doc.*` metadata, type, tags, heading path, and position.
+  </Step>
+  <Step title="Mark session as published">
+    The session status is updated to `PUBLISHED`. The session becomes read-only and no further edits are permitted.
+  </Step>
+</Steps>
+
+<Note>
+  Atomic replacement is scoped to the `source_id` — an MD5 hash of the source URL. If you ingest the same URL twice into different sessions and publish both to the same collection, the second publish replaces the first.
+</Note>
+
+## What gets stored in Qdrant
+
+Each published chunk is stored as a Qdrant point with the following payload fields:
+
+| Field | Description |
+|-------|-------------|
+| `content` | The chunk text |
+| `doc.url` | Source URL |
+| `doc.title` | Document or page title |
+| `doc.source_type` | `web`, `manual`, or `file` |
+| `doc.revision` | Publish revision counter |
+| `chunk.type` | Semantic type (e.g., `knowledge`, `faq`, `code`) |
+| `chunk.heading_path` | Array of headings providing context |
+| `chunk.section` | Section name if extracted |
+| `chunk.lang` | Detected language |
+| `tags` | Array of extracted tags |
+| `editor.*` | Last edit metadata (user, timestamp) |
+
+## Observability
+
+The publish operation emits structured log events at each stage:
+
+- `publish_start` — publish initiated
+- `publish_delete_done` — old chunks removed from Qdrant
+- `publish_upsert_done` — new chunks embedded and written
+- `publish_success` — operation complete
+- `publish_failure` — error with context
+
+## Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Session not in PREVIEWING state` | Preview step was skipped | Call `POST /api/session/:id/preview` first |
+| `Invalid collection ID format` | `targetCollectionId` is not a valid UUID | Check the UUID format of your collection ID |
+| `Session has no chunks` | No chunks exist in the session | Generate or add chunks before previewing and publishing |
+| `Collection not found` | The specified collection does not exist | Create the collection first with `POST /api/collections` |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Collections" icon="folder" href="/product/collections">
+    Manage published collections and edit chunks directly
+  </Card>
+  <Card title="Documents" icon="file-text" href="/product/documents">
+    Browse published content grouped by source document
+  </Card>
+</CardGroup>

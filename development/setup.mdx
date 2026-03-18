@@ -1,0 +1,166 @@
+---
+title: Development Setup
+description: Set up the RAGler backend, frontend, and docs for local day-to-day development.
+---
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed:
+
+- **Node.js 20+**
+- **pnpm**
+- **Docker** (for Redis and Qdrant)
+
+## Start the stack
+
+<Steps>
+  <Step title="Start infrastructure">
+    Bring up Redis and Qdrant using Docker Compose from the project root:
+
+    ```bash
+    docker compose up -d redis qdrant
+    ```
+  </Step>
+
+  <Step title="Start the backend">
+    ```bash
+    cd backend
+    pnpm install
+    cp .env.example .env
+    ```
+
+    Open `.env` and set `OPENAI_API_KEY` along with any other required values, then start the dev server:
+
+    ```bash
+    pnpm start:dev
+    ```
+
+    The backend listens on **port 3000** with hot reload enabled.
+  </Step>
+
+  <Step title="Start the frontend">
+    ```bash
+    cd ../frontend
+    pnpm install
+    pnpm dev
+    ```
+  </Step>
+
+  <Step title="Start the docs site">
+    ```bash
+    cd ../docs
+    pnpm install
+    pnpm start
+    ```
+  </Step>
+</Steps>
+
+## Verify the setup
+
+Once all services are running, confirm everything works:
+
+| Check | URL / Command |
+|---|---|
+| Backend Swagger UI | `http://localhost:3000/api/docs` |
+| MCP endpoint | `curl -X POST http://localhost:3000/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'` |
+| Frontend | Opens in browser, calls backend without errors |
+| Docs site | Loads at the Mintlify / Docusaurus default port |
+
+## Running tests
+
+All commands run from the `backend/` directory.
+
+<CodeGroup>
+```bash Unit tests
+pnpm test
+```
+
+```bash Unit tests (watch mode)
+pnpm test:watch
+```
+
+```bash Coverage report
+pnpm test:cov
+```
+
+```bash E2E tests (requires running infrastructure)
+pnpm test:e2e
+```
+</CodeGroup>
+
+To run a single test file:
+
+```bash
+pnpm test -- test/unit/session/session.service.spec.ts
+```
+
+<Note>
+E2E tests use **testcontainers** — they spin up isolated Redis and Qdrant containers automatically. You do not need to have `docker compose` services running for E2E tests.
+</Note>
+
+## Test file structure
+
+All tests live in `backend/test/`, never colocated with source code:
+
+```
+backend/test/
+├── unit/           # Unit tests — mirror src/ directory structure
+│   └── module/
+│       └── service.spec.ts
+├── app.e2e-spec.ts # E2E tests for primary flows
+└── jest-e2e.json   # E2E Jest config
+```
+
+<Warning>
+Never place `*.spec.ts` files inside `src/`. The Jest config enforces `test/unit` as the only root for unit tests.
+</Warning>
+
+## Code quality
+
+<CodeGroup>
+```bash Lint (auto-fix)
+pnpm lint
+```
+
+```bash Type check
+pnpm typecheck
+```
+
+```bash Format
+pnpm format
+```
+</CodeGroup>
+
+## TDD workflow
+
+RAGler enforces **Test-Driven Development** for all feature work:
+
+<Steps>
+  <Step title="RED — write a failing test">
+    Write a `*.spec.ts` file under `test/unit/` before writing any implementation.
+  </Step>
+
+  <Step title="GREEN — make it pass">
+    Write the minimal implementation code to make the test pass.
+  </Step>
+
+  <Step title="REFACTOR — clean up">
+    Improve the code while keeping all tests green.
+  </Step>
+
+  <Step title="Commit">
+    Create an atomic commit. Tests must be passing before committing.
+  </Step>
+
+  <Step title="Changeset">
+    If the change has observable behavior, run `pnpm changeset` and fill in the details.
+  </Step>
+</Steps>
+
+<Tip>
+Never write implementation before the test. Never commit while tests are failing.
+</Tip>
+
+## Next steps
+
+- [Releasing](/development/releasing) — how to cut a release using changesets

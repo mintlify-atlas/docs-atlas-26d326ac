@@ -1,0 +1,119 @@
+---
+title: API Overview
+description: Base URL, authentication, error format, and conventions for the RAGler REST API.
+---
+
+## Base URL
+
+All API endpoints are prefixed with `/api`:
+
+```
+http://localhost:3000/api
+```
+
+In production, replace `localhost:3000` with your deployment host.
+
+## Interactive documentation
+
+Swagger UI is available at:
+
+```
+http://localhost:3000/api/docs
+```
+
+You can execute requests directly from the browser using the **Try it out** button on each endpoint.
+
+## Authentication
+
+RAGler uses a user identifier header on every request. There is no token-based authentication in the current version.
+
+<ParamField header="X-User-ID" type="string" required>
+  Identifies the acting user for audit logging and ownership tracking. Must be present on all
+  requests that write data (create, update, delete). Some read endpoints also require it.
+</ParamField>
+
+```bash
+curl http://localhost:3000/api/collections \
+  -H "X-User-ID: user-123"
+```
+
+<Note>
+The `X-User-ID` header is required on all tagged endpoints. Omitting it on write operations will result in a `400 Bad Request`.
+</Note>
+
+## Feature flag headers
+
+Some endpoints are gated by feature flags. If a feature is disabled, the endpoint returns `403 Forbidden`.
+
+| Feature | Header guard | Affected endpoints |
+|---|---|---|
+| Web ingestion | `webIngest` flag | `POST /api/ingest/web` |
+| File ingestion | `fileIngest` flag | `POST /api/ingest/file` |
+
+Feature flags are configured via environment variables on the backend.
+
+## Error response format
+
+All errors follow a consistent JSON structure:
+
+```json
+{
+  "statusCode": 404,
+  "message": "Collection not found",
+  "error": "Not Found"
+}
+```
+
+<ResponseField name="statusCode" type="number">
+  HTTP status code of the error.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable description of what went wrong.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  HTTP status text (e.g. `Not Found`, `Bad Request`).
+</ResponseField>
+
+## Common HTTP status codes
+
+| Code | Meaning |
+|---|---|
+| `200` | Success |
+| `201` | Resource created |
+| `204` | Success, no content (delete operations) |
+| `400` | Validation error or bad request |
+| `403` | Feature disabled |
+| `404` | Resource not found |
+| `429` | Rate limit exceeded (100 req/min by default) |
+| `503` | Service unavailable (dependency down) |
+
+## Rate limiting
+
+The API is rate-limited at **100 requests per minute** by default. This is configurable via the `THROTTLE_TTL` and `THROTTLE_LIMIT` environment variables on the backend.
+
+MCP endpoints (`/mcp`, `/sse`, `/messages`) are exempt from rate limiting.
+
+## API groups
+
+<CardGroup cols={2}>
+  <Card title="Collections" href="/api/collections">
+    Create and manage knowledge collections and their chunks.
+  </Card>
+  <Card title="Ingest" href="/api/ingest">
+    Ingest content from web URLs, manual text, or file uploads.
+  </Card>
+  <Card title="Session" href="/api/session">
+    Manage draft sessions — the human-in-the-loop review step before publishing.
+  </Card>
+  <Card title="Search" href="/api/search">
+    Vector similarity search across published knowledge collections.
+  </Card>
+  <Card title="Health" href="/api/health">
+    Liveness and readiness probes for Kubernetes and monitoring.
+  </Card>
+  <Card title="MCP" href="/api/mcp">
+    Model Context Protocol endpoints for AI agent integration.
+  </Card>
+</CardGroup>

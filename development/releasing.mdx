@@ -1,0 +1,95 @@
+---
+title: Releasing
+description: Prepare and publish backend changes using the Changesets release workflow.
+---
+
+RAGler uses [Changesets](https://github.com/changesets/changesets) for version management and changelog generation. All release steps run from the `backend/` directory.
+
+## When is a changeset required?
+
+Create a changeset for any PR that:
+
+- Changes runtime behavior
+- Changes the public API
+- Fixes a bug
+- Adds a feature
+- Modifies operational behavior
+
+You **do not** need a changeset for:
+
+- Internal refactors with zero observable change
+- Formatting, comments, or docs-only changes
+- Test-only changes
+
+<Tip>
+If you are unsure, create a changeset. It is always safe to document a change.
+</Tip>
+
+## Semver classification
+
+| Bump | When to use |
+|------|-------------|
+| `patch` | Bugfix, internal improvement, no API changes |
+| `minor` | Backward-compatible feature addition |
+| `major` | Breaking changes that require user action |
+
+## Release workflow
+
+<Steps>
+  <Step title="Ensure quality gates pass">
+    Run tests, linting, and type checking before proceeding:
+
+    ```bash
+    cd backend
+    pnpm test
+    pnpm lint
+    pnpm typecheck
+    ```
+  </Step>
+
+  <Step title="Create a changeset">
+    Run the interactive changeset wizard. Select the packages affected, choose a semver bump, and write a description of what changed:
+
+    ```bash
+    pnpm changeset
+    ```
+
+    This creates a Markdown file under `.changeset/` that describes the release.
+  </Step>
+
+  <Step title="Version packages">
+    Before cutting the release, bump version numbers and update `CHANGELOG.md`:
+
+    ```bash
+    pnpm version
+    ```
+
+    This consumes all pending changeset files and writes updated version numbers to `package.json` and changelog entries to `backend/CHANGELOG.md`.
+  </Step>
+
+  <Step title="Publish">
+    Publish the artifacts to the package registry:
+
+    ```bash
+    pnpm release
+    ```
+  </Step>
+</Steps>
+
+## Verify the release
+
+After publishing, confirm:
+
+- `backend/CHANGELOG.md` contains an entry for the new version.
+- A release commit and git tag exist in the repository history.
+
+## Troubleshooting
+
+<CardGroup cols={2}>
+  <Card title="Missing changeset warnings" icon="triangle-exclamation">
+    You ran `pnpm version` without any pending changesets. Create a changeset first with `pnpm changeset`, then re-run versioning.
+  </Card>
+  <Card title="Publish / auth failures" icon="lock">
+    Verify package registry credentials and CI secrets. Check that `NPM_TOKEN` (or equivalent) is configured in your environment.
+  </Card>
+</CardGroup>

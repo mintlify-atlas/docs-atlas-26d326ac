@@ -1,0 +1,151 @@
+---
+title: Configurable chunking
+description: Control how ingested content is split into chunks using LLM-powered or character-based methods via the chunkingConfig parameter.
+---
+
+Every ingest endpoint accepts an optional `chunkingConfig` parameter that controls how source content is split into chunks. If omitted, RAGler defaults to LLM-powered chunking.
+
+## Chunking methods
+
+<CardGroup cols={2}>
+  <Card title="LLM chunking" icon="brain">
+    Uses OpenAI to intelligently identify natural content boundaries. Produces typed, enriched chunks with metadata extraction. Best for prose, documentation, and articles.
+  </Card>
+  <Card title="Character chunking" icon="text-cursor">
+    Splits content by character count with paragraph and sentence boundary detection. Produces uniform-sized chunks. Best for large documents where LLM cost is a concern.
+  </Card>
+</CardGroup>
+
+## Configuration fields
+
+<ParamField body="method" type="string">
+  Chunking strategy. One of `"llm"` or `"character"`. Defaults to `"llm"`.
+</ParamField>
+
+<ParamField body="chunkSize" type="number">
+  Target chunk size in characters. Integer between 100 and 10,000. Defaults to `1000`.
+
+  For character chunking: controls the maximum character count per chunk. For LLM chunking: used as a hint to the model.
+</ParamField>
+
+<ParamField body="overlap" type="number">
+  Number of characters to overlap between consecutive chunks. Integer between 0 and 2,000. Defaults to `200`.
+
+  Only meaningful for character chunking. LLM chunking determines boundaries semantically.
+</ParamField>
+
+## LLM chunking
+
+With `method: "llm"` (the default), OpenAI identifies natural content boundaries based on topic, structure, and meaning.
+
+**What LLM chunks produce:**
+
+- A `chunkType` for each chunk — one of: `knowledge`, `navigation`, `table_row`, `glossary`, `faq`, `code`
+- A `headingPath` array of breadcrumb headings providing context
+- `tags` extracted from the content
+- Language detection (`lang` field)
+
+```bash
+curl -X POST http://localhost:3000/api/ingest/manual \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "content": "Your document text here..."
+  }'
+```
+
+<Note>
+  Omitting `chunkingConfig` entirely is equivalent to passing `{ "method": "llm" }`. LLM chunking is the default for all ingest endpoints.
+</Note>
+
+## Character chunking
+
+With `method: "character"`, content is split at character boundaries with awareness of paragraph and sentence endings. Overlap ensures context is preserved across chunk boundaries.
+
+```bash
+curl -X POST http://localhost:3000/api/ingest/manual \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "content": "Your document text here...",
+    "chunkingConfig": {
+      "method": "character",
+      "chunkSize": 500,
+      "overlap": 100
+    }
+  }'
+```
+
+Character chunking produces uniform-sized text chunks without semantic type metadata. The `chunkType` defaults to `knowledge` for all character chunks.
+
+## Using chunkingConfig with all ingest endpoints
+
+The `chunkingConfig` parameter works the same way across all three ingest endpoints.
+
+<Tabs>
+  <Tab title="Web ingest">
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/web \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{
+        "url": "https://example.com/docs",
+        "chunkingConfig": {
+          "method": "character",
+          "chunkSize": 800,
+          "overlap": 150
+        }
+      }'
+    ```
+  </Tab>
+  <Tab title="Manual ingest">
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/manual \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{
+        "content": "Your document text here...",
+        "chunkingConfig": {
+          "method": "llm",
+          "chunkSize": 1200
+        }
+      }'
+    ```
+  </Tab>
+  <Tab title="File upload">
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/file \
+      -H "X-User-ID: user-1" \
+      -F "file=@./document.pdf" \
+      -F 'chunkingConfig={"method":"character","chunkSize":600,"overlap":80}'
+    ```
+  </Tab>
+</Tabs>
+
+## Choosing a method
+
+| Scenario | Recommended method |
+|----------|--------------------|
+| Documentation, articles, prose | `llm` (default) |
+| Very large documents (100+ pages) | `character` (lower cost) |
+| Content where semantic types matter | `llm` |
+| Uniform chunk sizing required | `character` |
+| CSV or structured data | `character` |
+
+## Verification
+
+After ingestion, call `GET /api/session/:id` and inspect the `chunks` array:
+
+- **LLM chunks**: each chunk has a typed `chunkType`, `headingPath`, and `tags` from LLM extraction.
+- **Character chunks**: chunks are uniformly sized. Boundaries respect paragraph and sentence endings where possible.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="list-check" href="/product/sessions">
+    Review and edit generated chunks in the session editor
+  </Card>
+  <Card title="Publishing" icon="upload" href="/product/publishing">
+    Publish curated chunks to a collection
+  </Card>
+</CardGroup>

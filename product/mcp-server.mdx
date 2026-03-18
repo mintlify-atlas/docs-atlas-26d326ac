@@ -1,0 +1,320 @@
+---
+title: MCP Server
+description: Connect any MCP-compatible AI client to RAGler's knowledge base using the built-in Model Context Protocol server.
+---
+
+RAGler includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. It runs as part of the NestJS backend — there is no separate service to deploy or configure.
+
+MCP clients such as Cursor and VS Code with Continue can connect to RAGler and use its knowledge base as context directly inside their AI chat and coding workflows.
+
+## Transport options
+
+| Transport | Endpoint | Spec |
+|-----------|----------|------|
+| Streamable HTTP | `POST /mcp` | MCP 2025-03-26 |
+| Legacy SSE | `GET /sse` + `POST /messages` | Pre-2025-03-26 |
+
+<Note>
+  MCP endpoints are served at the root path, not under `/api`. They are also excluded from the API rate limiter.
+</Note>
+
+## Available tools
+
+### `search_knowledge`
+
+Semantic search across a specific collection. Returns relevant chunks with content, document hierarchy, tags, and source metadata.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Natural language search query |
+| `collection_id` | string (UUID) | Yes | Collection to search |
+| `limit` | number | No | Results to return (1–100, default 10) |
+| `filters.source_types` | string[] | No | Filter by source: `web`, `manual` |
+| `filters.chunk_types` | string[] | No | Filter by type: `knowledge`, `navigation`, `table_row`, `glossary`, `faq`, `code` |
+| `filters.exclude_navigation` | boolean | No | Exclude navigation chunks (default: `true`) |
+| `filters.tags` | string[] | No | Filter by LLM-extracted tags |
+
+### `list_collections`
+
+Returns all available knowledge collections with their metadata. Takes no parameters.
+
+### `get_collection_info`
+
+Returns detailed information about a specific collection.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `collection_id` | string (UUID) | Yes | Collection to look up |
+
+### `insert_chunks`
+
+Inserts pre-processed chunks directly into a collection. Generates embeddings and atomically replaces any existing chunks from the same source URL.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `collection_id` | string (UUID) | Yes | Target collection |
+| `source.url` | string | Yes | Original source URL |
+| `source.source_type` | string | Yes | `web`, `manual`, or `file` |
+| `source.title` | string | No | Document title |
+| `chunks` | array | Yes | Chunks to insert (1–500) |
+| `chunks[].text` | string | Yes | Chunk text content |
+| `chunks[].type` | string | No | Chunk type (default: `knowledge`) |
+| `chunks[].heading_path` | string[] | No | Heading hierarchy |
+| `chunks[].tags` | string[] | No | Topic tags (max 12) |
+| `user_id` | string | Yes | User or agent identifier for audit |
+
+### `ingest_material`
+
+Submits content through the standard ingestion pipeline. Creates a draft session that can be reviewed in the RAGler UI before publishing. Supports web URLs, manual text, and base64-encoded file uploads.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `source_type` | string | Yes | `web`, `manual`, or `file` |
+| `url` | string | Conditional | Required when `source_type` is `web` |
+| `content` | string | Conditional | Required when `source_type` is `manual` (max 100 KB) |
+| `file_base64` | string | Conditional | Required when `source_type` is `file` |
+| `filename` | string | Conditional | Required when `source_type` is `file` |
+| `user_id` | string | Yes | User or agent identifier |
+| `chunking_config.method` | string | No | `llm` or `character` (default: `llm`) |
+| `chunking_config.chunk_size` | number | No | Character method: target size 100–10000 (default 1000) |
+| `chunking_config.overlap` | number | No | Character method: overlap 0–2000 (default 200) |
+
+## Runtime architecture
+
+```
+MCP Client → POST /mcp → McpController → McpServerService → McpToolsService
+                                                                    ↓
+                                                    VectorService / CollectionService
+                                                                    ↓
+                                                                Qdrant
+```
+
+Tool handlers call NestJS services directly via dependency injection — no internal HTTP round-trips.
+
+## Connecting from Cursor
+
+<Steps>
+  <Step title="Open Cursor Settings">
+    Go to **Cursor Settings → Features → MCP** and click **Add new MCP server**.
+  </Step>
+  <Step title="Add the RAGler server config">
+    Use the Streamable HTTP transport with the following configuration:
+
+    ```json
+    {
+      "mcpServers": {
+        "ragler": {
+          "url": "http://localhost:3000/mcp"
+        }
+      }
+    }
+    ```
+
+    Save the file. Cursor will connect on the next reload.
+  </Step>
+  <Step title="Use RAGler tools in Cursor AI">
+    In Cursor's AI chat, you can now ask:
+    - "Search my RAGler knowledge base for information about authentication."
+    - "List all available knowledge collections."
+    - "Find chunks tagged 'security' in collection `<uuid>`."
+  </Step>
+</Steps>
+
+## Connecting from VS Code with Continue
+
+<Steps>
+  <Step title="Open your Continue config">
+    Open `~/.continue/config.json` (or `config.yaml`) in VS Code.
+  </Step>
+  <Step title="Add the MCP server block">
+    ```json
+    {
+      "mcpServers": [
+        {
+          "name": "ragler",
+          "transport": {
+            "type": "http",
+            "url": "http://localhost:3000/mcp"
+          }
+        }
+      ]
+    }
+    ```
+  </Step>
+  <Step title="Reload Continue">
+    Run **Continue: Reload** from the VS Code command palette. The RAGler tools will appear in Continue's tool list.
+  </Step>
+</Steps>
+
+## Legacy SSE transport
+
+Some clients use the older SSE-based MCP transport. Connect by opening a persistent `GET /sse` connection, then sending messages to `POST /messages?sessionId=<id>`.
+
+```bash
+# Open an SSE connection (keep this running)
+curl -N http://localhost:3000/sse
+```
+
+```bash
+# Send a tool call on the same session
+curl -X POST "http://localhost:3000/messages?sessionId=<sessionId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "list_collections",
+      "arguments": {}
+    }
+  }'
+```
+
+## JSON-RPC tool call examples
+
+<CodeGroup>
+
+```json list_collections
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "list_collections",
+    "arguments": {}
+  }
+}
+```
+
+```json search_knowledge
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "search_knowledge",
+    "arguments": {
+      "query": "how does token refresh work",
+      "collection_id": "d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f",
+      "limit": 5,
+      "filters": {
+        "chunk_types": ["knowledge", "faq"],
+        "exclude_navigation": true
+      }
+    }
+  }
+}
+```
+
+```json get_collection_info
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "get_collection_info",
+    "arguments": {
+      "collection_id": "d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f"
+    }
+  }
+}
+```
+
+```json insert_chunks
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "insert_chunks",
+    "arguments": {
+      "collection_id": "d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f",
+      "source": {
+        "url": "https://internal.example.com/docs/auth",
+        "source_type": "web",
+        "title": "Authentication Guide"
+      },
+      "chunks": [
+        {
+          "text": "JWT tokens are issued with a 1-hour expiry. Refresh tokens are valid for 30 days.",
+          "type": "knowledge",
+          "heading_path": ["Authentication", "Token Lifetime"],
+          "tags": ["auth", "jwt", "tokens"]
+        }
+      ],
+      "user_id": "agent-1"
+    }
+  }
+}
+```
+
+```json ingest_material
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "tools/call",
+  "params": {
+    "name": "ingest_material",
+    "arguments": {
+      "source_type": "web",
+      "url": "https://docs.example.com/api-reference",
+      "user_id": "agent-1",
+      "chunking_config": {
+        "method": "llm"
+      }
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+## curl examples against Streamable HTTP
+
+<CodeGroup>
+
+```bash list tools
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list",
+    "params": {}
+  }'
+```
+
+```bash search knowledge
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "search_knowledge",
+      "arguments": {
+        "query": "deployment configuration",
+        "collection_id": "d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f",
+        "limit": 3
+      }
+    }
+  }'
+```
+
+</CodeGroup>
+
+<Warning>
+  `insert_chunks` performs atomic replacement: all existing chunks from the same `source.url` are deleted before the new chunks are inserted. Make sure to include all chunks for that source in a single call.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Chat Playground" icon="comments" href="/product/chat-playground">
+    RAG-powered chat with citations via the REST API.
+  </Card>
+  <Card title="Collection Agent" icon="robot" href="/product/collection-agent">
+    AI-driven collection management and quality control.
+  </Card>
+</CardGroup>

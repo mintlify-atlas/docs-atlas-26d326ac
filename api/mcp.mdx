@@ -1,0 +1,398 @@
+---
+title: MCP
+description: Model Context Protocol endpoints for integrating AI agents with RAGler's knowledge base.
+---
+
+RAGler implements the [Model Context Protocol (MCP)](https://spec.modelcontextprotocol.io/) so that any MCP-compatible AI agent or IDE extension can search and write to your knowledge collections without HTTP round-trips through the REST API.
+
+Two transports are available:
+
+| Transport | Endpoints | Spec |
+|---|---|---|
+| **Streamable HTTP** | `POST /mcp`, `GET /mcp`, `DELETE /mcp` | MCP 2025-03-26 |
+| **Legacy SSE** | `GET /sse`, `POST /messages` | Earlier MCP versions |
+
+<Note>
+MCP endpoints are excluded from the Swagger UI and rate limiting.
+</Note>
+
+---
+
+## Streamable HTTP transport
+
+### Send an MCP request
+
+```http
+POST /mcp
+```
+
+Stateless JSON-RPC 2.0 endpoint. Each request is independent — no session management required.
+
+**Content-Type:** `application/json`
+
+**Example: list available tools**
+
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/list",
+    "id": 1
+  }'
+```
+
+**Example: call a tool**
+
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "search_knowledge",
+      "arguments": {
+        "query": "authentication best practices",
+        "collection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      }
+    },
+    "id": 2
+  }'
+```
+
+---
+
+## Legacy SSE transport
+
+### Open SSE connection
+
+```http
+GET /sse
+```
+
+Opens a persistent Server-Sent Events stream. The server assigns a `sessionId` that must be included in all subsequent `POST /messages` calls.
+
+```bash
+curl -N http://localhost:3000/sse
+```
+
+### Send a message
+
+```http
+POST /messages?sessionId=<sessionId>
+```
+
+<ParamField query="sessionId" type="string" required>
+  Session ID from the `GET /sse` connection.
+</ParamField>
+
+**Response `400`** — missing `sessionId`.
+
+**Response `404`** — unknown session (connection was closed or never opened).
+
+---
+
+## Available tools
+
+The following MCP tools are registered and available via `tools/list`:
+
+<CardGroup cols={2}>
+  <Card title="search_knowledge" icon="magnifying-glass">
+    Semantic search across a knowledge collection. Returns ranked chunks with metadata.
+  </Card>
+  <Card title="list_collections" icon="list">
+    List all available collections with their metadata.
+  </Card>
+  <Card title="get_collection_info" icon="circle-info">
+    Get detailed information about a specific collection.
+  </Card>
+  <Card title="insert_chunks" icon="database">
+    Insert pre-processed chunks directly into a collection with atomic replacement and embedding generation.
+  </Card>
+  <Card title="ingest_material" icon="arrow-down-to-bracket">
+    Submit content for ingestion via the standard pipeline (web/manual/file). Creates a session for human review.
+  </Card>
+</CardGroup>
+
+---
+
+## Tool reference
+
+### `search_knowledge`
+
+Search across a knowledge collection with semantic search.
+
+<ParamField body="query" type="string" required>
+  Natural language search query.
+</ParamField>
+
+<ParamField body="collection_id" type="string" required>
+  UUID of the collection to search.
+</ParamField>
+
+<ParamField body="limit" type="number">
+  Maximum results (1–100). Default `10`.
+</ParamField>
+
+<ParamField body="filters" type="object">
+  Optional filters.
+
+  <Expandable title="Filter fields">
+    <ParamField body="filters.source_types" type="array">
+      Values: `web` | `manual` | `file`.
+    </ParamField>
+    <ParamField body="filters.chunk_types" type="array">
+      Values: `knowledge` | `navigation` | `table_row` | `glossary` | `faq` | `code`.
+    </ParamField>
+    <ParamField body="filters.exclude_navigation" type="boolean">
+      Exclude navigation chunks. Default `true`.
+    </ParamField>
+    <ParamField body="filters.tags" type="array">
+      Filter by LLM-extracted tags.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "search_knowledge",
+    "arguments": {
+      "query": "How to configure Redis",
+      "collection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "limit": 5,
+      "filters": {
+        "chunk_types": ["knowledge"],
+        "exclude_navigation": true
+      }
+    }
+  },
+  "id": 1
+}
+```
+
+---
+
+### `insert_chunks`
+
+Insert pre-processed chunks directly into a collection. Generates embeddings and performs **atomic replacement**: all existing chunks from the same source URL are deleted before inserting the new ones.
+
+<ParamField body="collection_id" type="string" required>
+  UUID of the target collection.
+</ParamField>
+
+<ParamField body="source" type="object" required>
+  Source document metadata.
+
+  <Expandable title="source fields">
+    <ParamField body="source.url" type="string" required>
+      Original source URL (used as the deduplication key).
+    </ParamField>
+    <ParamField body="source.title" type="string">
+      Document title. Optional.
+    </ParamField>
+    <ParamField body="source.source_type" type="string" required>
+      One of `web` | `manual` | `file`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="chunks" type="array" required>
+  Array of chunks to insert. Min 1, max 500.
+
+  <Expandable title="chunk fields">
+    <ParamField body="chunks[].text" type="string" required>
+      Chunk text content.
+    </ParamField>
+    <ParamField body="chunks[].type" type="string">
+      Chunk type. Default `knowledge`.
+    </ParamField>
+    <ParamField body="chunks[].heading_path" type="array">
+      Heading hierarchy (array of strings).
+    </ParamField>
+    <ParamField body="chunks[].tags" type="array">
+      Topic tags. Max 12.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="user_id" type="string" required>
+  User or agent identifier for audit logging.
+</ParamField>
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "insert_chunks",
+    "arguments": {
+      "collection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "source": {
+        "url": "https://example.com/docs",
+        "title": "Example Docs",
+        "source_type": "web"
+      },
+      "chunks": [
+        {
+          "text": "RAGler supports semantic search...",
+          "type": "knowledge",
+          "heading_path": ["Features", "Search"],
+          "tags": ["search", "vector"]
+        }
+      ],
+      "user_id": "agent-001"
+    }
+  },
+  "id": 1
+}
+```
+
+**Success response payload:**
+
+```json
+{
+  "success": true,
+  "collection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "source_id": "abc123md5",
+  "inserted_chunks": 1,
+  "duration_ms": 342
+}
+```
+
+---
+
+### `ingest_material`
+
+Submit material for ingestion through the standard HITL pipeline. Creates a session with auto-chunked content ready for human review before publishing.
+
+<ParamField body="source_type" type="string" required>
+  One of `web` | `manual` | `file`.
+</ParamField>
+
+<ParamField body="user_id" type="string" required>
+  User or agent identifier.
+</ParamField>
+
+<ParamField body="url" type="string">
+  Required when `source_type` is `web`.
+</ParamField>
+
+<ParamField body="content" type="string">
+  Required when `source_type` is `manual`. Max 100 KB.
+</ParamField>
+
+<ParamField body="file_base64" type="string">
+  Required when `source_type` is `file`. Base64-encoded file content. Max 10 MB decoded.
+</ParamField>
+
+<ParamField body="filename" type="string">
+  Required when `source_type` is `file`. Original filename with extension.
+</ParamField>
+
+<ParamField body="chunking_config" type="object">
+  Optional chunking configuration.
+
+  <Expandable title="chunking_config fields">
+    <ParamField body="chunking_config.method" type="string">
+      `llm` or `character`. Default `llm`.
+    </ParamField>
+    <ParamField body="chunking_config.chunk_size" type="number">
+      Target chunk size (100–10,000). Default `1000`.
+    </ParamField>
+    <ParamField body="chunking_config.overlap" type="number">
+      Character overlap (0–2,000). Default `200`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "ingest_material",
+    "arguments": {
+      "source_type": "web",
+      "url": "https://docs.example.com/api",
+      "user_id": "agent-001"
+    }
+  },
+  "id": 1
+}
+```
+
+**Success response payload:**
+
+```json
+{
+  "success": true,
+  "session_id": "sess-a1b2c3d4",
+  "source_type": "web",
+  "source_url": "https://docs.example.com/api",
+  "status": "DRAFT",
+  "created_at": "2024-01-15T10:00:00.000Z",
+  "message": "Session created. Content has been chunked and is ready for review in the Ragler UI."
+}
+```
+
+---
+
+### `list_collections`
+
+List all available knowledge collections. No arguments required.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": { "name": "list_collections", "arguments": {} },
+  "id": 1
+}
+```
+
+---
+
+### `get_collection_info`
+
+<ParamField body="collection_id" type="string" required>
+  UUID of the collection.
+</ParamField>
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_collection_info",
+    "arguments": {
+      "collection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    }
+  },
+  "id": 1
+}
+```
+
+---
+
+## MCP response format
+
+All tool calls return a standard MCP response envelope:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      { "type": "text", "text": "...result text or JSON..." }
+    ],
+    "isError": false
+  }
+}
+```
+
+On tool error, `isError` is `true` and `text` contains the error message.

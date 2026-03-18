@@ -1,0 +1,152 @@
+---
+title: Ingest module
+description: Source ingestion strategies, session initialisation, and chunking configuration for RAGler.
+---
+
+The Ingest module is responsible for accepting source content from three input types, normalising it, optionally fetching remote content, generating initial chunks, and writing a draft session to Redis.
+
+## Responsibilities
+
+- Accept web URLs, manual text, or file uploads as input.
+- Resolve the correct ingestion strategy for each source type.
+- Extract plain-text `content` and optional `rawContent` (HTML) from the source.
+- Generate initial chunks using either LLM chunking or character-split chunking.
+- Persist a `SessionData` object to Redis under `session:{sessionId}`.
+- Provide session CRUD used by the Session module.
+
+## Ingestion strategies
+
+The strategy pattern is used to isolate source-specific extraction logic. The `IngestStrategyResolver` resolves the correct strategy at call time.
+
+| Strategy | Source type | What it does |
+|----------|------------|---------------|
+| `WebStrategy` | `web` | Fetches the URL, strips HTML to plain text, preserves raw HTML for preview |
+| `ManualStrategy` | `manual` | Treats the input string directly as content |
+| `FileStrategy` | `file` | Decodes a base64-encoded buffer, extracts text based on MIME type |
+
+All strategies return an `IngestResult`:
+
+```typescript
+interface IngestResult {
+  content:     string;  // plain-text body
+  title:       string;
+  sourceUrl:   string;
+  metadata:    Record<string, unknown>;
+  rawContent?: string;  // raw HTML (web only) — must be sanitised before rendering
+}
+```
+
+## `IngestService` methods
+
+```typescript
+class IngestService {
+  // Ingest a web URL
+  ingestWeb(dto: IngestWebDto, userId: string): Promise<IngestResponseDto>
+
+  // Ingest manually supplied text
+  ingestManual(dto: IngestManualDto, userId: string): Promise<IngestResponseDto>
+
+  // Ingest an uploaded file (Multer)
+  ingestFile(file: Express.Multer.File, userId: string, chunkingConfig?: ChunkingConfig): Promise<IngestResponseDto>
+
+  // Retrieve a session from Redis by sessionId
+  getSession(sessionId: string): Promise<SessionData | null>
+
+  // Overwrite specific fields of a session
+  updateSession(sessionId: string, data: Partial<SessionData>): Promise<void>
+
+  // Delete a session from Redis
+  deleteSession(sessionId: string): Promise<void>
+
+  // List all active sessions, sorted newest-first
+  listSessions(): Promise<SessionData[]>
+}
+```
+
+## Chunking configuration
+
+All three ingest endpoints accept an optional `chunkingConfig` object in the request body.
+
+```typescript
+interface ChunkingConfig {
+  method?:    'llm' | 'character';  // default: 'llm'
+  chunkSize?: number;               // characters (character mode only)
+  overlap?:   number;               // overlap in characters (character mode only)
+}
+```
+
+<Tabs>
+  <Tab title="LLM chunking">
+    The default. Sends the full content to the configured LLM model with a system prompt that instructs it to split into semantically meaningful chunks (200–1000 characters, preserving section boundaries).
+
+    For content longer than `LLM_MAX_CONTENT_LENGTH` (default 30 000 characters), a sliding window is used with 500-character overlap, and near-duplicate chunks are removed from the merged result.
+  </Tab>
+  <Tab title="Character chunking">
+    Splits the text at fixed character boundaries without an LLM call. Use this when the OpenAI API is unavailable or cost is a concern.
+
+    Configure via `chunkingConfig.chunkSize` and `chunkingConfig.overlap`.
+  </Tab>
+</Tabs>
+
+## Session data shape
+
+```typescript
+interface SessionData {
+  sessionId:   string;          // "session_<uuid>"
+  sourceUrl:   string;
+  sourceType:  'web' | 'manual' | 'file';
+  userId:      string;
+  status:      'DRAFT' | 'PREVIEW' | 'PUBLISHED';
+  content:     string;
+  rawContent?: string;          // web sources only
+  chunks: Array<{
+    id:       string;           // "temp_N" or "chunk_<uuid>"
+    text:     string;
+    isDirty:  boolean;
+  }>;
+  metadata?: {
+    filename?: string;
+    fileSize?: number;
+    mimeType?: string;
+  };
+  createdAt: string;            // ISO-8601
+  updatedAt: string;            // ISO-8601
+}
+```
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/ingest/web` | Ingest from a URL |
+| `POST` | `/api/ingest/manual` | Ingest from raw text |
+| `POST` | `/api/ingest/file` | Ingest from a file upload (`multipart/form-data`) |
+
+All endpoints respond with:
+
+```typescript
+interface IngestResponseDto {
+  sessionId:  string;
+  sourceType: string;
+  sourceUrl:  string;
+  status:     string;
+  createdAt:  string;
+}
+```
+
+## Dependencies
+
+```
+IngestModule
+  ├── RedisService         (session persistence)
+  ├── LlmService           (LLM chunking)
+  ├── ConfigService        (session TTL, LLM config)
+  └── IngestStrategyResolver
+        ├── WebStrategy
+        ├── ManualStrategy
+        └── FileStrategy
+```
+
+<Note>
+  Chunking events (`chunking_start`, `chunking_success`, `chunking_failure`) are logged during `createSession`. These log events are the primary observability signal for the ingest pipeline performance.
+</Note>

@@ -1,0 +1,124 @@
+---
+title: Health
+description: Liveness and readiness probes for Kubernetes and monitoring systems.
+---
+
+RAGler exposes three health endpoints following the Kubernetes probe convention. No `X-User-ID` header is required.
+
+**Base path:** `/api/health`
+
+---
+
+## Liveness probe
+
+```http
+GET /api/health/liveness
+```
+
+Indicates whether the Node.js process is alive. Returns immediately without checking external dependencies.
+
+Use this as your Kubernetes `livenessProbe`.
+
+```bash
+curl http://localhost:3000/api/health/liveness
+```
+
+**Response `200`**
+
+```json
+{ "status": "ok" }
+```
+
+---
+
+## Readiness probe
+
+```http
+GET /api/health/readiness
+```
+
+Checks whether the service can handle requests by verifying connectivity to Redis and Qdrant.
+
+Use this as your Kubernetes `readinessProbe`.
+
+```bash
+curl http://localhost:3000/api/health/readiness
+```
+
+**Response `200`** (healthy)
+
+```json
+{
+  "status": "ok",
+  "info": {
+    "redis": { "status": "up" },
+    "qdrant": { "status": "up" }
+  },
+  "error": {},
+  "details": {
+    "redis": { "status": "up" },
+    "qdrant": { "status": "up" }
+  }
+}
+```
+
+**Response `503`** (unhealthy)
+
+```json
+{
+  "status": "error",
+  "info": {
+    "redis": { "status": "up" }
+  },
+  "error": {
+    "qdrant": {
+      "status": "down",
+      "message": "connect ECONNREFUSED 127.0.0.1:6333"
+    }
+  },
+  "details": {
+    "redis": { "status": "up" },
+    "qdrant": {
+      "status": "down",
+      "message": "connect ECONNREFUSED 127.0.0.1:6333"
+    }
+  }
+}
+```
+
+<Expandable title="Response fields">
+  <ResponseField name="status" type="string">
+    Overall health status: `ok` or `error`.
+  </ResponseField>
+  <ResponseField name="info" type="object">
+    Map of healthy indicator names to their status.
+  </ResponseField>
+  <ResponseField name="error" type="object">
+    Map of unhealthy indicator names to their error details.
+  </ResponseField>
+  <ResponseField name="details" type="object">
+    Combined map of all indicators (healthy and unhealthy) with full status details.
+  </ResponseField>
+</Expandable>
+
+---
+
+## Full health check
+
+```http
+GET /api/health
+```
+
+Same as the readiness probe — checks Redis and Qdrant connectivity. Returns the same response shape.
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+**Response `200`** — all dependencies healthy.
+
+**Response `503`** — one or more dependencies unreachable.
+
+<Note>
+For Kubernetes deployments, use `/api/health/liveness` for `livenessProbe` and `/api/health/readiness` for `readinessProbe`. Do not use the root `/api/health` endpoint for Kubernetes probes.
+</Note>

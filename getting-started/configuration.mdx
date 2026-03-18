@@ -1,0 +1,199 @@
+---
+title: Configuration
+description: All environment variables, feature flags, and frontend settings for RAGler.
+---
+
+RAGler's backend is configured entirely through environment variables in `backend/.env`. Copy the example file and edit it:
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+## Backend environment variables
+
+### Server
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `3000` | Port the backend HTTP server listens on |
+| `NODE_ENV` | No | `development` | Node environment (`development` or `production`) |
+
+### Redis
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `REDIS_HOST` | Yes | — | Hostname of the Redis instance |
+| `REDIS_PORT` | No | `6379` | Port Redis listens on |
+
+<Note>
+  When running with `docker compose up -d redis`, set `REDIS_HOST=localhost` for local development or `REDIS_HOST=redis` inside a Docker Compose network.
+</Note>
+
+### Qdrant
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `QDRANT_URL` | Yes | — | Full URL of the Qdrant instance, e.g. `http://localhost:6333` |
+
+### OpenAI
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | Yes | — | OpenAI API key used for LLM chunking, embeddings, and the agent |
+
+### Rate limiting
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `THROTTLE_TTL` | No | `60000` | Rate limit window in milliseconds |
+| `THROTTLE_LIMIT` | No | `100` | Maximum number of requests per window per IP |
+
+### LLM chunking
+
+These variables tune the chunking LLM call. The defaults work for most cases.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LLM_CHUNKING_TIMEOUT` | No | `60000` | Request timeout in milliseconds |
+| `LLM_CHUNKING_MAX_RETRIES` | No | `2` | Number of automatic retries on failure |
+| `LLM_CHUNKING_MAX_CONTENT_LENGTH` | No | `30000` | Maximum input character length before truncation |
+
+### LLM embedding
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LLM_EMBEDDING_TIMEOUT` | No | `30000` | Request timeout in milliseconds |
+| `LLM_EMBEDDING_MAX_RETRIES` | No | `2` | Number of automatic retries on failure |
+| `LLM_EMBEDDING_BATCH_SIZE` | No | `100` | Number of chunks embedded per API call |
+
+### Storage
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SQLITE_PATH` | No | `data/ragler.db` | File path for the SQLite database used to persist settings |
+| `SESSION_TTL` | No | `86400` | Draft session TTL in seconds (default: 24 hours) |
+
+## Feature flags
+
+Feature flags let you enable or disable major capabilities without redeploying. They can also be toggled in the UI under **Settings → Features**.
+
+| Flag | Default | Controls |
+|------|---------|----------|
+| `FEATURE_WEB_INGEST` | `true` | Web URL ingestion — fetch and parse content from any public URL |
+| `FEATURE_FILE_INGEST` | `true` | File upload ingestion — accept PDF, DOCX, TXT, and MD files |
+| `FEATURE_AGENT` | `true` | AI agent — chat, collection cleaning, and chunk generation |
+
+To disable a feature, set it to `false` in `backend/.env`:
+
+```env
+FEATURE_AGENT=false
+```
+
+<Tip>
+  Disabling features you don't use reduces your OpenAI API usage. For example, if you only ingest from files, set `FEATURE_WEB_INGEST=false` and `FEATURE_AGENT=false`.
+</Tip>
+
+## Frontend environment variables
+
+The frontend is configured via environment variables passed at build time or at runtime (for Docker).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXT_PUBLIC_API_URL` | Yes | — | Public URL of the backend API, e.g. `http://localhost:3010/api`. This is embedded in the browser bundle. |
+| `BACKEND_INTERNAL_URL` | No | — | Internal URL used by the Next.js server for server-side requests, e.g. `http://api:3000` inside a Docker network. |
+
+### Local development example
+
+If you changed the backend port to `3010` in `backend/.env`:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3010/api
+```
+
+### Docker Compose example
+
+The `docker-compose.yml` pre-configures both variables:
+
+```yaml
+environment:
+  - NEXT_PUBLIC_API_URL=http://localhost:3010/api
+  - BACKEND_INTERNAL_URL=http://api:3000
+```
+
+`BACKEND_INTERNAL_URL` uses the Docker Compose service name (`api`) so server-side requests stay inside the private network.
+
+## Complete backend `.env` reference
+
+This is the full `backend/.env.example` with all available variables:
+
+```env
+# Server
+PORT=3000
+NODE_ENV=development
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Qdrant
+QDRANT_URL=http://localhost:6333
+
+# OpenAI
+OPENAI_API_KEY=your-openai-api-key-here
+
+# Rate Limiting
+THROTTLE_TTL=60000
+THROTTLE_LIMIT=100
+
+# LLM Chunking (optional - defaults provided)
+# LLM_CHUNKING_TIMEOUT=60000
+# LLM_CHUNKING_MAX_RETRIES=2
+# LLM_CHUNKING_MAX_CONTENT_LENGTH=30000
+
+# LLM Embedding (optional - defaults provided)
+# LLM_EMBEDDING_TIMEOUT=30000
+# LLM_EMBEDDING_MAX_RETRIES=2
+# LLM_EMBEDDING_BATCH_SIZE=100
+
+# SQLite (persistent settings storage)
+# SQLITE_PATH=data/ragler.db
+
+# Feature Flags (all default to true)
+# FEATURE_WEB_INGEST=true
+# FEATURE_FILE_INGEST=true
+# FEATURE_AGENT=true
+```
+
+## Verifying configuration
+
+After editing `.env`, restart the backend and check the readiness endpoint:
+
+```bash
+curl http://localhost:3000/api/health/readiness
+```
+
+A healthy response looks like:
+
+```json
+{
+  "status": "ok",
+  "info": {
+    "redis": { "status": "up" },
+    "qdrant": { "status": "up" }
+  }
+}
+```
+
+If the backend fails to start with `Environment validation failed`, check that all required variables (`OPENAI_API_KEY`, `REDIS_HOST`, `QDRANT_URL`) are present and correctly formatted.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Your first collection" icon="folder-plus" href="/getting-started/first-collection">
+    Walk through the complete ingest-to-publish workflow
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/getting-started/troubleshooting">
+    Fix common setup and configuration issues
+  </Card>
+</CardGroup>

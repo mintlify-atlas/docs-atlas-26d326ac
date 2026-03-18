@@ -1,0 +1,408 @@
+---
+title: Session
+description: Manage draft sessions — the human-in-the-loop review step between ingestion and publishing.
+---
+
+Sessions are temporary workspaces stored in **Redis**. After ingesting content, you review and edit chunks in a session before publishing them to a permanent collection in Qdrant.
+
+**Session lifecycle:** `DRAFT` → *(edit chunks)* → `PREVIEW` → `PUBLISHED`
+
+**Base path:** `/api/session`
+
+**Required header:** `X-User-ID` (on write operations)
+
+---
+
+## List all sessions
+
+```http
+GET /api/session
+```
+
+```bash
+curl http://localhost:3000/api/session \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`**
+
+```json
+{
+  "sessions": [
+    {
+      "sessionId": "sess-a1b2c3d4",
+      "sourceUrl": "https://example.com/page",
+      "sourceType": "web",
+      "status": "DRAFT",
+      "chunkCount": 8,
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:05:00.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+## Get a session
+
+```http
+GET /api/session/:id
+```
+
+Returns full session details including all chunks.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+```bash
+curl http://localhost:3000/api/session/sess-a1b2c3d4 \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`**
+
+```json
+{
+  "sessionId": "sess-a1b2c3d4",
+  "sourceUrl": "https://example.com/page",
+  "sourceType": "web",
+  "status": "DRAFT",
+  "chunks": [
+    {
+      "id": "chunk-uuid",
+      "text": "Chunk content here...",
+      "isDirty": false
+    }
+  ],
+  "rawContent": "<html>...</html>",
+  "createdAt": "2024-01-15T10:00:00.000Z",
+  "updatedAt": "2024-01-15T10:05:00.000Z"
+}
+```
+
+<Expandable title="Response fields">
+  <ResponseField name="sessionId" type="string">
+    Unique session identifier.
+  </ResponseField>
+  <ResponseField name="sourceUrl" type="string">
+    Original source URL or manual content reference.
+  </ResponseField>
+  <ResponseField name="sourceType" type="string">
+    One of `web` | `manual` | `file`.
+  </ResponseField>
+  <ResponseField name="status" type="string">
+    Current session status: `DRAFT`, `PREVIEW`, or `PUBLISHED`.
+  </ResponseField>
+  <ResponseField name="chunks" type="array">
+    Array of chunks in the session.
+  </ResponseField>
+  <ResponseField name="chunks[].id" type="string">
+    Chunk identifier.
+  </ResponseField>
+  <ResponseField name="chunks[].text" type="string">
+    Chunk text content.
+  </ResponseField>
+  <ResponseField name="chunks[].isDirty" type="boolean">
+    Whether this chunk has been manually edited since auto-chunking.
+  </ResponseField>
+  <ResponseField name="rawContent" type="string | null">
+    Raw HTML source for web ingestion (sanitize before rendering). `null` for manual and file sources.
+  </ResponseField>
+  <ResponseField name="createdAt" type="string">
+    ISO-8601 creation timestamp.
+  </ResponseField>
+  <ResponseField name="updatedAt" type="string">
+    ISO-8601 last update timestamp.
+  </ResponseField>
+</Expandable>
+
+**Response `404`** — session not found.
+
+---
+
+## Generate chunks
+
+```http
+POST /api/session/:id/chunks
+```
+
+Triggers LLM-based chunking of the session's raw content. The session must be in `DRAFT` status and have content available.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/session/sess-a1b2c3d4/chunks \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`** — updated session with generated chunks.
+
+**Response `400`** — session not in `DRAFT` status or has no content.
+
+**Response `404`** — session not found.
+
+---
+
+## Update a chunk
+
+```http
+PATCH /api/session/:id/chunks/:chunkId
+```
+
+Replace the text of a single chunk. Marks the chunk as dirty (`isDirty: true`).
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+<ParamField path="chunkId" type="string" required>
+  Chunk ID.
+</ParamField>
+
+<ParamField body="text" type="string" required>
+  New chunk text. Min 1 character.
+</ParamField>
+
+```bash
+curl -X PATCH http://localhost:3000/api/session/sess-a1b2c3d4/chunks/chunk-uuid \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{"text": "Updated chunk content."}'
+```
+
+**Response `200`** — updated session object.
+
+---
+
+## Add a chunk
+
+```http
+POST /api/session/:id/chunks/add
+```
+
+Append a new manually authored chunk to the session.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+<ParamField body="text" type="string" required>
+  Text content for the new chunk.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/session/sess-a1b2c3d4/chunks/add \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{"text": "A new chunk I am adding manually."}'
+```
+
+**Response `200`** — updated session object.
+
+---
+
+## Generate a chunk with AI
+
+```http
+POST /api/session/:id/chunks/generate
+```
+
+Uses AI web search to generate a new chunk based on a prompt, then appends it to the session.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+<ParamField body="prompt" type="string" required>
+  Natural language prompt describing the chunk to generate.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/session/sess-a1b2c3d4/chunks/generate \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{"prompt": "Summarise the key security best practices for REST APIs"}'
+```
+
+**Response `200`** — updated session object with the generated chunk appended.
+
+---
+
+## Merge chunks
+
+```http
+POST /api/session/:id/chunks/merge
+```
+
+Merge two or more session chunks into a single chunk.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+<ParamField body="chunkIds" type="array" required>
+  Ordered list of chunk IDs to merge. Minimum 2.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/session/sess-a1b2c3d4/chunks/merge \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{"chunkIds": ["chunk-uuid-1", "chunk-uuid-2"]}'
+```
+
+**Response `200`** — updated session object.
+
+---
+
+## Split a chunk
+
+```http
+POST /api/session/:id/chunks/:chunkId/split
+```
+
+Split a chunk into multiple parts.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+<ParamField path="chunkId" type="string" required>
+  ID of the chunk to split.
+</ParamField>
+
+<ParamField body="splitPoints" type="array">
+  Array of character positions at which to split. Mutually exclusive with `newTextBlocks`.
+</ParamField>
+
+<ParamField body="newTextBlocks" type="array">
+  Explicit text blocks to create. Mutually exclusive with `splitPoints`.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/session/sess-a1b2c3d4/chunks/chunk-uuid/split \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{"splitPoints": [200]}'
+```
+
+**Response `200`** — updated session object.
+
+---
+
+## Preview (lock before publishing)
+
+```http
+POST /api/session/:id/preview
+```
+
+Locks the session and validates chunks before publishing. Transitions the session status to `PREVIEW`. Returns any validation warnings.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/session/sess-a1b2c3d4/preview \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`**
+
+```json
+{
+  "sessionId": "sess-a1b2c3d4",
+  "status": "PREVIEW",
+  "chunks": [...],
+  "isValid": true,
+  "warnings": []
+}
+```
+
+<ResponseField name="isValid" type="boolean">
+  Whether the session passed all validation checks.
+</ResponseField>
+
+<ResponseField name="warnings" type="array">
+  List of warning messages (e.g. empty chunks, duplicate content).
+</ResponseField>
+
+---
+
+## Publish to a collection
+
+```http
+POST /api/session/:id/publish
+```
+
+Publishes all session chunks to the target collection using atomic replacement — existing chunks from the same source are deleted before the new chunks are upserted. The session must be in `PREVIEW` status.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+<ParamField body="targetCollectionId" type="string" required>
+  UUID of the target collection to publish into.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/session/sess-a1b2c3d4/publish \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{"targetCollectionId": "col-uuid-here"}'
+```
+
+**Response `200`**
+
+```json
+{
+  "sessionId": "sess-a1b2c3d4",
+  "publishedChunks": 8,
+  "collectionId": "col-uuid-here"
+}
+```
+
+<ResponseField name="publishedChunks" type="number">
+  Number of chunks written to the collection.
+</ResponseField>
+
+<ResponseField name="collectionId" type="string">
+  UUID of the collection that received the chunks.
+</ResponseField>
+
+---
+
+## Delete a session
+
+```http
+DELETE /api/session/:id
+```
+
+Deletes a session in `DRAFT` or `PREVIEW` status. Published sessions cannot be deleted.
+
+<ParamField path="id" type="string" required>
+  Session ID.
+</ParamField>
+
+```bash
+curl -X DELETE http://localhost:3000/api/session/sess-a1b2c3d4 \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`**
+
+```json
+{
+  "sessionId": "sess-a1b2c3d4",
+  "deleted": true
+}
+```
+
+**Response `400`** — cannot delete a published session.
+
+**Response `404`** — session not found.

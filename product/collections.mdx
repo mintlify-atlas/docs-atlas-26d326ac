@@ -1,0 +1,301 @@
+---
+title: Collections
+description: Create and manage knowledge collections, and directly edit published chunks without a session.
+---
+
+A collection is a named Qdrant vector store that holds published chunks. Collections are the published knowledge base that powers search, chat, and retrieval. You can create and delete collections, and use the collection editor to modify published chunks directly — without going through the full ingest → session → publish flow.
+
+## Collection CRUD endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/collections` | List all collections |
+| `GET` | `/api/collections/:id` | Get collection by ID |
+| `POST` | `/api/collections` | Create a new collection |
+| `DELETE` | `/api/collections/:id` | Delete a collection and all its chunks |
+
+### Create a collection
+
+```bash
+curl -X POST http://localhost:3000/api/collections \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "name": "Product Documentation",
+    "description": "Public-facing product docs"
+  }'
+```
+
+<ParamField body="name" type="string" required>
+  Collection name. 1–100 characters.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional description. Maximum 500 characters.
+</ParamField>
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Product Documentation",
+  "description": "Public-facing product docs",
+  "createdBy": "user-1",
+  "createdAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+<ResponseField name="id" type="string">
+  The UUID of the new collection. Use this as `targetCollectionId` when publishing sessions.
+</ResponseField>
+
+### List collections
+
+```bash
+curl http://localhost:3000/api/collections \
+  -H "X-User-ID: user-1"
+```
+
+### Delete a collection
+
+```bash
+curl -X DELETE http://localhost:3000/api/collections/<collectionId> \
+  -H "X-User-ID: user-1"
+```
+
+Returns `204 No Content`. This permanently deletes the collection and all its chunks from Qdrant.
+
+<Warning>
+  Deleting a collection is irreversible. All chunks stored in Qdrant under this collection are permanently removed.
+</Warning>
+
+---
+
+## Collection editor — chunk endpoints
+
+The collection editor lets you create, update, delete, split, and merge published chunks directly, without a session. All changes take effect immediately in Qdrant.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/collections/:collectionId/chunks` | List chunks (paginated) |
+| `GET` | `/api/collections/:collectionId/chunks/:chunkId` | Get a single chunk |
+| `POST` | `/api/collections/:collectionId/chunks` | Create a new chunk |
+| `PUT` | `/api/collections/:collectionId/chunks/:chunkId` | Update chunk content or metadata |
+| `DELETE` | `/api/collections/:collectionId/chunks/:chunkId` | Delete a chunk |
+| `POST` | `/api/collections/:collectionId/chunks/:chunkId/split` | Split a chunk |
+| `POST` | `/api/collections/:collectionId/chunks/merge` | Merge chunks |
+| `PUT` | `/api/collections/:collectionId/chunks/:chunkId/quality` | Update quality score |
+| `PUT` | `/api/collections/:collectionId/reorder` | Reorder chunks by position |
+
+### List chunks
+
+```bash
+curl "http://localhost:3000/api/collections/<collectionId>/chunks?limit=20&offset=0&sortBy=position" \
+  -H "X-User-ID: user-1"
+```
+
+#### Query parameters
+
+<ParamField query="limit" type="number">
+  Number of chunks to return. 1–100, default `20`.
+</ParamField>
+
+<ParamField query="offset" type="number">
+  Pagination offset. Default `0`.
+</ParamField>
+
+<ParamField query="sortBy" type="string">
+  Sort field: `position` (default), `created_at`, or `quality_score`.
+</ParamField>
+
+<ParamField query="sortOrder" type="string">
+  Sort direction: `asc` (default) or `desc`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Filter chunks by text search. Maximum 200 characters.
+</ParamField>
+
+<ParamField query="sourceType" type="string">
+  Filter by source type: `web`, `manual`, or `file`.
+</ParamField>
+
+<ParamField query="sourceId" type="string">
+  Filter by source ID (MD5 hash of source URL).
+</ParamField>
+
+<ParamField query="minQuality" type="number">
+  Minimum quality score filter (0–100).
+</ParamField>
+
+<ParamField query="maxQuality" type="number">
+  Maximum quality score filter (0–100).
+</ParamField>
+
+<ParamField query="tags" type="string">
+  Comma-separated list of tags to filter by.
+</ParamField>
+
+### Create a chunk
+
+Create a new chunk directly in the collection without a session.
+
+```bash
+curl -X POST http://localhost:3000/api/collections/<collectionId>/chunks \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "content": "RAGler supports human-in-the-loop review of every chunk before publication.",
+    "chunkType": "knowledge",
+    "headingPath": ["Overview", "Key features"],
+    "tags": ["hitl", "review"],
+    "position": 0
+  }'
+```
+
+<ParamField body="content" type="string" required>
+  Chunk text. 1–10,000 characters.
+</ParamField>
+
+<ParamField body="chunkType" type="string">
+  Semantic type. One of: `knowledge`, `navigation`, `table_row`, `glossary`, `faq`, `code`. Defaults to `knowledge`.
+</ParamField>
+
+<ParamField body="headingPath" type="string[]">
+  Ordered list of headings providing context for this chunk.
+</ParamField>
+
+<ParamField body="tags" type="string[]">
+  Tags for filtering and retrieval. Maximum 12 tags, each up to 50 characters.
+</ParamField>
+
+<ParamField body="position" type="number">
+  Zero-based position in the collection for retrieval ordering.
+</ParamField>
+
+### Update a chunk
+
+```bash
+curl -X PUT http://localhost:3000/api/collections/<collectionId>/chunks/<chunkId> \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "content": "Updated chunk content.",
+    "tags": ["updated", "reviewed"]
+  }'
+```
+
+<ParamField body="content" type="string">
+  New chunk text. 1–10,000 characters.
+</ParamField>
+
+<ParamField body="tags" type="string[]">
+  Replacement tag list. Maximum 12 tags.
+</ParamField>
+
+<ParamField body="headingPath" type="string[]">
+  Updated heading path.
+</ParamField>
+
+<ParamField body="chunkType" type="string">
+  Updated chunk type.
+</ParamField>
+
+### Split a chunk
+
+<Tabs>
+  <Tab title="Split by character positions">
+    ```bash
+    curl -X POST http://localhost:3000/api/collections/<collectionId>/chunks/<chunkId>/split \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{"splitPoints": [120, 280]}'
+    ```
+  </Tab>
+  <Tab title="Split with explicit text blocks">
+    ```bash
+    curl -X POST http://localhost:3000/api/collections/<collectionId>/chunks/<chunkId>/split \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{
+        "newTextBlocks": [
+          "First split block.",
+          "Second split block."
+        ]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+### Merge chunks
+
+```bash
+curl -X POST http://localhost:3000/api/collections/<collectionId>/chunks/merge \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "chunkIds": ["chunk-id-1", "chunk-id-2"],
+    "separator": "\n\n"
+  }'
+```
+
+<ParamField body="chunkIds" type="string[]" required>
+  IDs of chunks to merge. Minimum 2.
+</ParamField>
+
+<ParamField body="separator" type="string">
+  Text inserted between merged chunks. Default is `\n\n`. Maximum 100 characters.
+</ParamField>
+
+### Update quality score
+
+```bash
+curl -X PUT http://localhost:3000/api/collections/<collectionId>/chunks/<chunkId>/quality \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "score": 82,
+    "issues": ["too short", "missing context"]
+  }'
+```
+
+<ParamField body="score" type="number" required>
+  Quality score from 0 to 100.
+</ParamField>
+
+<ParamField body="issues" type="string[]">
+  Array of issue labels. Used to flag quality problems for later review.
+</ParamField>
+
+---
+
+## Reorder chunks
+
+Update the `position` of multiple chunks to control retrieval ordering. Returns `204 No Content`.
+
+```bash
+curl -X PUT http://localhost:3000/api/collections/<collectionId>/reorder \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "chunkPositions": [
+      { "chunkId": "chunk-id-1", "position": 0 },
+      { "chunkId": "chunk-id-2", "position": 1 },
+      { "chunkId": "chunk-id-3", "position": 2 }
+    ]
+  }'
+```
+
+<ParamField body="chunkPositions" type="object[]" required>
+  Array of `{ chunkId, position }` objects. Minimum 1 entry. Positions are zero-based integers.
+</ParamField>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Documents" icon="file-text" href="/product/documents">
+    Browse published content grouped by source document
+  </Card>
+  <Card title="Publishing" icon="upload" href="/product/publishing">
+    Understand how sessions are committed to collections
+  </Card>
+</CardGroup>

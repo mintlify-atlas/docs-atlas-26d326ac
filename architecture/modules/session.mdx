@@ -1,0 +1,123 @@
+---
+title: Session module
+description: Draft chunk lifecycle management, preview locking, and publish to Qdrant in RAGler.
+---
+
+The Session module owns the human-in-the-loop editing lifecycle. It exposes endpoints for reading sessions, editing chunks, locking for preview, and triggering the publish pipeline.
+
+## Responsibilities
+
+- Expose session list and session detail endpoints.
+- Enforce status-gated mutations (edits blocked unless `DRAFT`).
+- Support chunk editing operations: generate, update, split, merge, add.
+- Lock sessions into `PREVIEW` status and run validation checks.
+- Execute the full publish pipeline: v2 chunking → embeddings → atomic Qdrant upsert → session cleanup.
+- Delete sessions (forbidden for `PUBLISHED` sessions).
+
+## `SessionService` methods
+
+```typescript
+class SessionService {
+  // List all active sessions (delegates to IngestService.listSessions)
+  listSessions(): Promise<SessionListResponseDto>
+
+  // Fetch a session; throws NotFoundException if absent
+  getSession(sessionId: string): Promise<SessionResponseDto>
+
+  // Delete a DRAFT or PREVIEW session; blocked for PUBLISHED
+  deleteSession(sessionId: string, userId: string): Promise<DeleteSessionResponseDto>
+
+  // Re-run LLM chunking on session.content; requires DRAFT status
+  generateChunks(sessionId: string, userId: string): Promise<SessionResponseDto>
+
+  // Merge a list of chunks into one; requires DRAFT status
+  mergeChunks(sessionId: string, dto: MergeChunksDto): Promise<SessionResponseDto>
+
+  // Split a chunk at character offsets or into explicit text blocks; requires DRAFT status
+  splitChunk(sessionId: string, chunkId: string, dto: SplitChunkDto): Promise<SessionResponseDto>
+
+  // Overwrite a chunk's text; requires DRAFT status
+  updateChunk(sessionId: string, chunkId: string, dto: UpdateChunkDto): Promise<SessionResponseDto>
+
+  // Append a new chunk; requires DRAFT status
+  addChunk(sessionId: string, text: string): Promise<SessionResponseDto>
+
+  // Lock session to PREVIEW and return validation warnings
+  preview(sessionId: string): Promise<PreviewResponseDto>
+
+  // Run full publish pipeline to Qdrant and delete session
+  publish(sessionId: string, dto: PublishDto, userId: string): Promise<PublishResponseDto>
+}
+```
+
+## Publish pipeline
+
+The publish operation is the core HITL handoff point. The sequence is designed so that a failure at any stage leaves Qdrant in a consistent state.
+
+<Steps>
+  <Step title="Validate session and collection">
+    The session is fetched from Redis and the target `kb_{collectionId}` collection is verified to exist in Qdrant.
+  </Step>
+
+  <Step title="V2 chunk with structured metadata">
+    `LlmService.chunkContentV2` is called with the session's `rawContent` (or `content` as fallback) and a `DocMetadata` object. This produces fully structured `QdrantPayload[]` objects with `doc.*`, `chunk.*`, `tags`, and `acl` fields.
+  </Step>
+
+  <Step title="Generate embeddings">
+    `LlmService.generateEmbeddings` sends all chunk texts to `text-embedding-3-small` in a single batch. **This step runs before any Qdrant delete.** If it fails, existing data is untouched.
+  </Step>
+
+  <Step title="Atomic replacement">
+    1. Delete all existing Qdrant points where `doc.source_id` matches the MD5 hash of the source URL (`publish_delete_done` event logged).
+    2. Upsert the new points (`publish_upsert_done` event logged).
+  </Step>
+
+  <Step title="Cleanup">
+    The draft session is deleted from Redis. The `publish_success` event is logged with `publishedChunks`, `collectionId`, `sourceId`, and `durationMs`.
+  </Step>
+</Steps>
+
+<Warning>
+  If the Qdrant upsert fails after the delete step, data for that `source_id` may be temporarily absent. The session is **not** deleted on failure, allowing a retry. The `publish_failure` event is logged with the error details.
+</Warning>
+
+## Status transitions
+
+| Status | Allowed mutations |
+|--------|------------------|
+| `DRAFT` | edit, split, merge, add chunks, generate chunks, preview |
+| `PREVIEW` | publish, delete session |
+| `PUBLISHED` | none (session deleted on success) |
+
+## Validation during preview
+
+`preview` runs the following checks and returns `warnings` in the response:
+
+- No chunks in session → `"No chunks to publish"`
+- Empty chunk text (after trim) → `"N empty chunks found"`
+
+The `isValid` flag in `PreviewResponseDto` is `true` only when `warnings` is empty. Warnings do not block publish; the user decides whether to proceed.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/session` | List all sessions |
+| `GET` | `/api/session/:id` | Get session detail |
+| `DELETE` | `/api/session/:id` | Delete a session |
+| `POST` | `/api/session/:id/chunks` | Re-generate chunks (LLM) |
+| `POST` | `/api/session/:id/merge` | Merge chunks |
+| `POST` | `/api/session/:id/split/:chunkId` | Split a chunk |
+| `PATCH` | `/api/session/:id/chunks/:chunkId` | Update a chunk |
+| `POST` | `/api/session/:id/chunks/add` | Add a chunk |
+| `POST` | `/api/session/:id/preview` | Lock and validate |
+| `POST` | `/api/session/:id/publish` | Publish to Qdrant |
+
+## Dependencies
+
+```
+SessionModule
+  ├── IngestService        (session CRUD in Redis)
+  ├── LlmService           (v2 chunking + embeddings)
+  └── QdrantClientService  (atomic publish)
+```

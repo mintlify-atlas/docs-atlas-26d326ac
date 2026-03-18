@@ -1,0 +1,90 @@
+---
+title: Health module
+description: Liveness and readiness health check endpoints for RAGler.
+---
+
+The Health module exposes three HTTP endpoints that Kubernetes, Docker, and load balancers use to determine whether the service is running and capable of handling requests.
+
+## Responsibilities
+
+- Report process liveness (is the Node.js process alive?).
+- Report service readiness (can the service handle requests? — checks Redis and Qdrant).
+- Aggregate dependency health indicators using `@nestjs/terminus`.
+
+## Endpoints
+
+| Method | Path | Description | Returns 503 when |
+|--------|------|-------------|------------------|
+| `GET` | `/api/health` | Full health check (Redis + Qdrant) | Either dependency is unreachable |
+| `GET` | `/api/health/liveness` | Process alive check | Never — returns `{ status: "ok" }` as long as the process is running |
+| `GET` | `/api/health/readiness` | Dependency readiness (Redis + Qdrant) | Either dependency is unreachable |
+
+<Note>
+  `/api/health/liveness` is a lightweight ping that never checks external dependencies. Use it as the Kubernetes `livenessProbe`. Use `/api/health/readiness` as the `readinessProbe`.
+</Note>
+
+## Health indicators
+
+### `RedisHealthIndicator`
+
+Pings the Redis connection. A failure here means sessions cannot be read or written and all ingest and session endpoints will fail.
+
+### `QdrantHealthIndicator`
+
+Pings the Qdrant REST API. A failure here means search, publish, and collection operations will fail.
+
+## Response shape
+
+Liveness response:
+
+```json
+{ "status": "ok" }
+```
+
+Healthy readiness response (HTTP 200):
+
+```json
+{
+  "status": "ok",
+  "info": {
+    "redis":  { "status": "up" },
+    "qdrant": { "status": "up" }
+  },
+  "error": {},
+  "details": {
+    "redis":  { "status": "up" },
+    "qdrant": { "status": "up" }
+  }
+}
+```
+
+Unhealthy response (HTTP 503):
+
+```json
+{
+  "status": "error",
+  "info": {
+    "redis": { "status": "up" }
+  },
+  "error": {
+    "qdrant": { "status": "down", "message": "connect ECONNREFUSED" }
+  },
+  "details": {
+    "redis":  { "status": "up" },
+    "qdrant": { "status": "down", "message": "connect ECONNREFUSED" }
+  }
+}
+```
+
+## Dependencies
+
+```
+HealthModule
+  ├── HealthCheckService     (@nestjs/terminus)
+  ├── RedisHealthIndicator
+  └── QdrantHealthIndicator
+```
+
+## MCP server health
+
+The MCP server (port 3100) exposes a separate, lightweight health endpoint at `GET /health` that returns `{ "status": "ok" }`. This is used by Docker health checks for the MCP server process and does not go through the NestJS application.

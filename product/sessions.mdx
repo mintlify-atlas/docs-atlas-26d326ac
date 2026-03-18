@@ -1,0 +1,301 @@
+---
+title: Sessions
+description: Manage draft sessions — generate, edit, split, merge, and preview chunks before publishing to a collection.
+---
+
+A session is the draft workspace where all content review happens. It lives in Redis and holds the source content, any generated chunks, and the current lifecycle state. All chunk operations happen on a session before anything reaches Qdrant.
+
+## Session lifecycle
+
+```
+DRAFT → CHUNKED → PREVIEWING → PUBLISHED
+```
+
+| State | Description | Allowed operations |
+|-------|-------------|--------------------|
+| `DRAFT` | Session created; source content extracted, no chunks yet | Generate chunks, delete session |
+| `CHUNKED` | Chunks generated; editing is active | Edit, split, merge, add chunks, generate AI chunk, preview |
+| `PREVIEWING` | Session locked for validation | Publish only |
+| `PUBLISHED` | Chunks committed to Qdrant | Read-only |
+
+<Warning>
+  Once a session enters `PREVIEWING`, no further chunk edits are accepted. If you need to make changes, delete the session and start a new ingest.
+</Warning>
+
+## All session endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/session` | List all sessions |
+| `GET` | `/api/session/:id` | Get session details and chunks |
+| `POST` | `/api/session/:id/chunks` | Generate chunks from session content using LLM |
+| `POST` | `/api/session/:id/chunks/add` | Add a new chunk manually |
+| `POST` | `/api/session/:id/chunks/generate` | Generate a chunk using AI web search |
+| `POST` | `/api/session/:id/chunks/merge` | Merge multiple chunks into one |
+| `POST` | `/api/session/:id/chunks/:chunkId/split` | Split a chunk into multiple chunks |
+| `PATCH` | `/api/session/:id/chunks/:chunkId` | Update chunk text |
+| `POST` | `/api/session/:id/preview` | Lock session and validate before publishing |
+| `POST` | `/api/session/:id/publish` | Publish chunks to a collection |
+| `DELETE` | `/api/session/:id` | Delete a draft session |
+
+---
+
+## List sessions
+
+```bash
+curl http://localhost:3000/api/session \
+  -H "X-User-ID: user-1"
+```
+
+Returns a paginated list of all sessions.
+
+<ResponseField name="sessions" type="array">
+  Array of session summary objects.
+</ResponseField>
+
+<ResponseField name="sessions[].sessionId" type="string">
+  Unique session identifier.
+</ResponseField>
+
+<ResponseField name="sessions[].sourceType" type="string">
+  One of `web`, `manual`, or `file`.
+</ResponseField>
+
+<ResponseField name="sessions[].status" type="string">
+  Current lifecycle state: `DRAFT`, `CHUNKED`, `PREVIEWING`, or `PUBLISHED`.
+</ResponseField>
+
+<ResponseField name="sessions[].chunkCount" type="number">
+  Number of chunks currently in the session.
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of sessions.
+</ResponseField>
+
+---
+
+## Get session details
+
+```bash
+curl http://localhost:3000/api/session/<sessionId> \
+  -H "X-User-ID: user-1"
+```
+
+Returns the full session including all chunks and source metadata.
+
+<ResponseField name="sessionId" type="string">
+  Unique session identifier.
+</ResponseField>
+
+<ResponseField name="sourceUrl" type="string">
+  The canonical URL of the source.
+</ResponseField>
+
+<ResponseField name="sourceType" type="string">
+  One of `web`, `manual`, or `file`.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current lifecycle state.
+</ResponseField>
+
+<ResponseField name="chunks" type="array">
+  All chunks in the session. Each chunk has `id`, `text`, and `isDirty` (whether it has been manually edited).
+</ResponseField>
+
+<ResponseField name="rawContent" type="string | null">
+  Raw HTML/XML source content. Present for `web` sources; `null` for `manual` and `file`. Must be sanitized before rendering in a browser.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string">
+  ISO 8601 last-updated timestamp.
+</ResponseField>
+
+---
+
+## Chunk operations
+
+### Generate chunks
+
+Runs LLM-powered chunking on the session's source content. The session must be in `DRAFT` status and have content.
+
+```bash
+curl -X POST http://localhost:3000/api/session/<sessionId>/chunks \
+  -H "X-User-ID: user-1"
+```
+
+Returns the full session with newly generated chunks. Session moves to `CHUNKED` state.
+
+<Note>
+  The default chunking method is LLM-powered. Pass `chunkingConfig` at ingest time to switch to character-based chunking or adjust chunk size.
+</Note>
+
+### Add a chunk manually
+
+Append a new chunk with arbitrary text to the session.
+
+```bash
+curl -X POST http://localhost:3000/api/session/<sessionId>/chunks/add \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{"text": "This is a manually added chunk."}'
+```
+
+### Generate a chunk with AI
+
+Use the collection agent to generate a chunk from a prompt. The generated text is automatically added to the session.
+
+```bash
+curl -X POST http://localhost:3000/api/session/<sessionId>/chunks/generate \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{"prompt": "Summarize the authentication flow for a REST API"}'
+```
+
+### Edit a chunk
+
+Update the text of an existing chunk. Marks the chunk as `isDirty: true`.
+
+```bash
+curl -X PATCH http://localhost:3000/api/session/<sessionId>/chunks/<chunkId> \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{"text": "Updated chunk content goes here."}'
+```
+
+<ParamField body="text" type="string" required>
+  The new text for the chunk. Minimum 1 character.
+</ParamField>
+
+### Split a chunk
+
+Split one chunk into multiple smaller chunks. You can specify split points by character position or provide explicit text blocks.
+
+<Tabs>
+  <Tab title="Split by character positions">
+    ```bash
+    curl -X POST http://localhost:3000/api/session/<sessionId>/chunks/<chunkId>/split \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{"splitPoints": [150, 320]}'
+    ```
+
+    <ParamField body="splitPoints" type="number[]">
+      Array of character positions at which to split the chunk text.
+    </ParamField>
+  </Tab>
+  <Tab title="Split with explicit text blocks">
+    ```bash
+    curl -X POST http://localhost:3000/api/session/<sessionId>/chunks/<chunkId>/split \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{
+        "newTextBlocks": [
+          "First part of the content.",
+          "Second part of the content.",
+          "Third part of the content."
+        ]
+      }'
+    ```
+
+    <ParamField body="newTextBlocks" type="string[]">
+      Explicit text for each resulting chunk. Minimum 2 blocks required. The original chunk is replaced.
+    </ParamField>
+  </Tab>
+</Tabs>
+
+### Merge chunks
+
+Combine two or more chunks into a single chunk. The merged chunks are removed and replaced with the combined result.
+
+```bash
+curl -X POST http://localhost:3000/api/session/<sessionId>/chunks/merge \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "chunkIds": ["chunk-id-1", "chunk-id-2", "chunk-id-3"]
+  }'
+```
+
+<ParamField body="chunkIds" type="string[]" required>
+  Array of chunk IDs to merge. Minimum 2 IDs required.
+</ParamField>
+
+---
+
+## Preview
+
+Lock the session and validate all chunks before publishing. This transitions the session from `CHUNKED` to `PREVIEWING`.
+
+```bash
+curl -X POST http://localhost:3000/api/session/<sessionId>/preview \
+  -H "X-User-ID: user-1"
+```
+
+```json
+{
+  "sessionId": "abc-123",
+  "status": "PREVIEWING",
+  "chunks": [...],
+  "isValid": true,
+  "warnings": []
+}
+```
+
+<ResponseField name="isValid" type="boolean">
+  Whether the session passed validation and can be published.
+</ResponseField>
+
+<ResponseField name="warnings" type="string[]">
+  Any validation warnings. The session can still be published if `isValid` is `true` even with warnings present.
+</ResponseField>
+
+---
+
+## Publish
+
+Commit the previewed chunks to a collection. See [Publishing](/product/publishing) for full details.
+
+```bash
+curl -X POST http://localhost:3000/api/session/<sessionId>/publish \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{"targetCollectionId": "<collection-uuid>"}'
+```
+
+---
+
+## Delete a session
+
+Delete a draft session. You cannot delete a session in `PUBLISHED` state.
+
+```bash
+curl -X DELETE http://localhost:3000/api/session/<sessionId> \
+  -H "X-User-ID: user-1"
+```
+
+```json
+{
+  "sessionId": "abc-123",
+  "deleted": true
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Publishing" icon="upload" href="/product/publishing">
+    Understand atomic replacement and publish your reviewed chunks
+  </Card>
+  <Card title="Configurable chunking" icon="sliders" href="/product/configurable-chunking">
+    Control chunk size, overlap, and chunking strategy
+  </Card>
+  <Card title="Collections" icon="folder" href="/product/collections">
+    Manage collections and edit published chunks directly
+  </Card>
+</CardGroup>

@@ -1,0 +1,184 @@
+---
+title: Data model
+description: Redis session schema, Qdrant point payload schema, and the session status lifecycle.
+---
+
+RAGler maintains two distinct state planes: a mutable **draft plane** in Redis and an immutable-until-replaced **published plane** in Qdrant.
+
+## Draft state (Redis)
+
+A session is written to Redis when an ingest call succeeds and deleted when the session is published or explicitly discarded.
+
+### Session schema
+
+```typescript
+interface SessionData {
+  sessionId:  string;          // "session_<uuid>"
+  sourceUrl:  string;          // canonical URL or "manual://..."
+  sourceType: 'web' | 'manual' | 'file';
+  userId:     string;          // value from X-User-ID header
+  status:     'DRAFT' | 'PREVIEW' | 'PUBLISHED';
+  content:    string;          // plain-text body extracted from source
+  rawContent?: string;         // raw HTML (web sources only) — sanitize before rendering
+  chunks: Array<{
+    id:      string;           // "temp_N" (LLM) or "chunk_<uuid>" (manual edits)
+    text:    string;
+    isDirty: boolean;          // true if user has edited this chunk
+  }>;
+  metadata?: {
+    filename?: string;
+    fileSize?: number;
+    mimeType?: string;
+  };
+  createdAt: string;           // ISO-8601
+  updatedAt: string;           // ISO-8601
+}
+```
+
+**Redis key:** `session:{sessionId}` 
+**TTL:** configurable via `SESSION_TTL` environment variable.
+
+<Warning>
+  `rawContent` contains unsanitised HTML from web sources. Always run it through a sanitiser (e.g. DOMPurify) before injecting into the DOM.
+</Warning>
+
+## Published state (Qdrant)
+
+Every published chunk is stored as a Qdrant point in a `kb_{collectionId}` collection. The point has a 1536-dimensional embedding vector and a structured payload.
+
+### Point schema
+
+```typescript
+interface QdrantPoint {
+  id:      string;     // deterministic UUID derived from source_id + content_hash
+  vector:  number[];  // 1536-dim text-embedding-3-small embedding
+  payload: QdrantPayload;
+}
+
+interface QdrantPayload {
+  doc:    DocMetadata;
+  chunk:  ChunkMetadata;
+  tags:   string[];         // up to 12 LLM-extracted topic tags
+  acl:    AclMetadata;
+  editor?: EditorMetadata;  // present only for chunks edited in the Collection Editor
+}
+```
+
+### `doc.*` — document metadata
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_type` | `'web' \| 'manual' \| 'file'` | Origin of the document |
+| `source_id` | `string` | MD5 hash of the source URL, used as a stable group key |
+| `url` | `string` | Original URL or `manual://<hash>` |
+| `space_key` | `string \| null` | Reserved for future workspace partitioning |
+| `title` | `string \| null` | Document or page title |
+| `revision` | `number \| string` | Document version |
+| `last_modified_at` | `string` | ISO-8601 timestamp |
+| `last_modified_by` | `string \| null` | User ID of the publisher |
+| `filename` | `string \| null` | Original filename (file uploads only) |
+| `file_size` | `number \| null` | File size in bytes (file uploads only) |
+| `mime_type` | `string \| null` | MIME type (file uploads only) |
+| `ingest_date` | `string` | ISO-8601 timestamp of when the session was created |
+
+### `chunk.*` — chunk metadata
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Stable UUID: deterministic from `source_id + content_hash` |
+| `index` | `number` | Zero-based position within the document |
+| `type` | `ChunkType` | Semantic type (see below) |
+| `heading_path` | `string[]` | Heading hierarchy, e.g. `["Module 3", "3.1 Overview"]` |
+| `section` | `string \| null` | Formatted heading path, e.g. `"Module 3 / 3.1 Overview"` |
+| `text` | `string` | Chunk content |
+| `content_hash` | `string` | SHA-256 hash in the form `sha256:<hex>` |
+| `lang` | `'en' \| 'ru' \| 'mixed'` | Detected language |
+
+**Chunk types:**
+
+| Type | Description |
+|------|-------------|
+| `knowledge` | General informational content (default) |
+| `navigation` | Menus, breadcrumbs, link lists — excluded from search by default |
+| `table_row` | Rows extracted from structured tables |
+| `glossary` | Term-definition pairs |
+| `faq` | Question-and-answer pairs |
+| `code` | Source code blocks |
+
+### `tags` — topic tags
+
+An array of up to 12 short strings extracted by the LLM tag extractor (`gpt-4o-mini`) from each chunk at publish time. Tags are indexed in Qdrant as a keyword field and can be used as search filters.
+
+### `acl` — access control
+
+```typescript
+interface AclMetadata {
+  visibility:     'internal' | 'public';
+  allowed_groups: string[];
+  allowed_users:  string[];
+}
+```
+
+Default ACL sets `visibility: 'internal'` with empty allow-lists. Full ACL enforcement is not implemented in the current baseline.
+
+### `editor` — collection editor metadata (optional)
+
+Present only on chunks that were created or modified through the Collection Editor.
+
+```typescript
+interface EditorMetadata {
+  position:       number;         // display order within the collection
+  quality_score:  number | null;  // AI-assigned score 0–100
+  quality_issues: string[];       // identified quality problems
+  last_edited_at: string | null;  // ISO-8601
+  last_edited_by: string | null;  // user ID
+  edit_count:     number;         // total number of edits
+}
+```
+
+## Session status lifecycle
+
+```
+          POST /api/ingest/*
+                 │
+                 ▼
+┌──────────────────────────────┐
+│           DRAFT              │  ← chunks can be edited, split, merged
+│                              │
+│  edit / split / merge chunks │
+└──────────────┬───────────────┘
+               │  POST /api/session/:id/preview
+               ▼
+┌──────────────────────────────┐
+│          PREVIEW             │  ← read-only, validation warnings shown
+│                              │
+│  review chunks + warnings    │
+└──────────────┬───────────────┘
+               │  POST /api/session/:id/publish
+               ▼
+        Qdrant upsert
+        Redis session deleted
+```
+
+<Note>
+  There is no persistent `PUBLISHED` status record. Once publish completes successfully, the Redis session is deleted. The published data lives in Qdrant.
+</Note>
+
+## Collection registry
+
+Collection metadata is stored in a dedicated Qdrant collection named `sys_registry`. Each point represents one collection:
+
+```typescript
+{
+  id:      string;   // UUID (the collectionId)
+  vector:  [0];      // scalar placeholder — registry is not used for search
+  payload: {
+    name:        string;
+    description: string;
+    created_by:  string;
+    created_at:  string;  // ISO-8601
+  }
+}
+```
+
+The corresponding data collection is named `kb_{collectionId}` and is created when the collection is registered.

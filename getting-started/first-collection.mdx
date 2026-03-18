@@ -1,0 +1,217 @@
+---
+title: Your first collection
+description: Create a collection, ingest content, review chunks in a draft session, and publish to Qdrant — end to end.
+---
+
+This walkthrough takes you through the full RAGler workflow using `curl`. By the end, you will have a live, searchable knowledge collection in Qdrant.
+
+## Prerequisites
+
+- Backend running at `http://localhost:3000`
+- Redis and Qdrant healthy (`GET /api/health/readiness` returns `ok`)
+- An `X-User-ID` value to identify your requests (any non-empty string works, e.g. `demo@ragler.ai`)
+
+<Note>
+  All RAGler API endpoints require the `X-User-ID` header. It scopes sessions and operations to a user identity. In development, any string works.
+</Note>
+
+## Walkthrough
+
+<Steps>
+  <Step title="Create a collection">
+    A collection is a named bucket in Qdrant that holds published chunks. Create one first so you have a target when publishing.
+
+    ```bash
+    curl -X POST http://localhost:3000/api/collections \
+      -H 'Content-Type: application/json' \
+      -H 'X-User-ID: demo@ragler.ai' \
+      -d '{"name":"Support KB","description":"Support documentation"}'
+    ```
+
+    The response includes the collection ID you will use later:
+
+    ```json
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Support KB",
+      "description": "Support documentation",
+      "createdAt": "2026-03-18T10:00:00.000Z"
+    }
+    ```
+
+    Save the `id` value — you will need it in the publish step.
+  </Step>
+
+  <Step title="Ingest content">
+    Ingest creates a **draft session** in Redis containing the raw content. The session holds your chunks while you review and edit them.
+
+    This example uses the manual ingest endpoint. You can also ingest from a web URL or file upload.
+
+    ```bash
+    curl -X POST http://localhost:3000/api/ingest/manual \
+      -H 'Content-Type: application/json' \
+      -H 'X-User-ID: demo@ragler.ai' \
+      -d '{"content":"Redis stores draft sessions. Qdrant stores published chunks. The backend is built with NestJS and the frontend with Next.js."}'
+    ```
+
+    The response includes the `sessionId`:
+
+    ```json
+    {
+      "sessionId": "sess_abc123xyz",
+      "status": "pending",
+      "createdAt": "2026-03-18T10:01:00.000Z"
+    }
+    ```
+
+    Save the `sessionId` — every subsequent step references it.
+  </Step>
+
+  <Step title="Generate chunks">
+    The ingest step loads raw content into the session. This step calls OpenAI to split and enrich it into typed, tagged chunks.
+
+    ```bash
+    curl -X POST http://localhost:3000/api/session/sess_abc123xyz/chunks \
+      -H 'X-User-ID: demo@ragler.ai'
+    ```
+
+    Expected response:
+
+    ```json
+    {
+      "sessionId": "sess_abc123xyz",
+      "status": "chunked",
+      "chunkCount": 3
+    }
+    ```
+
+    <Tip>
+      Chunk generation is an async LLM call. If your content is long, it may take a few seconds. Poll `GET /api/session/:sessionId` to check the status.
+    </Tip>
+  </Step>
+
+  <Step title="Review the session">
+    Inspect the chunks the LLM generated. Each chunk has a unique ID, text, and metadata.
+
+    ```bash
+    curl http://localhost:3000/api/session/sess_abc123xyz \
+      -H 'X-User-ID: demo@ragler.ai'
+    ```
+
+    Example response:
+
+    ```json
+    {
+      "sessionId": "sess_abc123xyz",
+      "status": "chunked",
+      "chunks": [
+        {
+          "id": "chunk_001",
+          "text": "Redis stores draft sessions.",
+          "metadata": { "type": "fact", "tags": ["redis", "storage"] }
+        },
+        {
+          "id": "chunk_002",
+          "text": "Qdrant stores published chunks.",
+          "metadata": { "type": "fact", "tags": ["qdrant", "storage"] }
+        },
+        {
+          "id": "chunk_003",
+          "text": "The backend is built with NestJS and the frontend with Next.js.",
+          "metadata": { "type": "fact", "tags": ["architecture"] }
+        }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Edit a chunk (optional)">
+    If a chunk's text needs adjusting, patch it before publishing:
+
+    ```bash
+    curl -X PATCH http://localhost:3000/api/session/sess_abc123xyz/chunks/chunk_003 \
+      -H 'Content-Type: application/json' \
+      -H 'X-User-ID: demo@ragler.ai' \
+      -d '{"text":"RAGler backend is built with NestJS 11. The frontend uses Next.js 15."}'
+    ```
+
+    The patch is saved in Redis immediately. You can edit as many chunks as needed before moving to preview.
+  </Step>
+
+  <Step title="Preview">
+    Locking the session into preview validates all chunks and shows exactly what will be published. No changes can be made once preview is active.
+
+    ```bash
+    curl -X POST http://localhost:3000/api/session/sess_abc123xyz/preview \
+      -H 'X-User-ID: demo@ragler.ai'
+    ```
+
+    Expected response:
+
+    ```json
+    {
+      "sessionId": "sess_abc123xyz",
+      "status": "preview",
+      "chunkCount": 3
+    }
+    ```
+  </Step>
+
+  <Step title="Publish to the collection">
+    Publish atomically writes all chunks to Qdrant, generates embeddings, and replaces any previously published data from this session. Use the collection `id` from step 1.
+
+    ```bash
+    curl -X POST http://localhost:3000/api/session/sess_abc123xyz/publish \
+      -H 'Content-Type: application/json' \
+      -H 'X-User-ID: demo@ragler.ai' \
+      -d '{"targetCollectionId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}'
+    ```
+
+    A successful publish response:
+
+    ```json
+    {
+      "sessionId": "sess_abc123xyz",
+      "status": "published",
+      "publishedChunks": 3,
+      "collectionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    }
+    ```
+
+    Confirm `publishedChunks` is greater than `0`.
+  </Step>
+
+  <Step title="Search published content">
+    Run a semantic search against your newly published collection:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/search \
+      -H 'Content-Type: application/json' \
+      -H 'X-User-ID: demo@ragler.ai' \
+      -d '{
+        "query": "Where are draft sessions stored?",
+        "collectionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "limit": 5
+      }'
+    ```
+
+    You should see the Redis-related chunk ranked highest in the results.
+  </Step>
+</Steps>
+
+## What's next
+
+<CardGroup cols={2}>
+  <Card title="Core concepts" icon="book" href="/product/overview">
+    Understand collections, sessions, chunks, and the publish lifecycle in depth
+  </Card>
+  <Card title="MCP server" icon="plug" href="/product/mcp-server">
+    Connect RAGler to Cursor, VS Code, and other MCP-compatible tools
+  </Card>
+  <Card title="API reference" icon="code" href="/api/overview">
+    Explore every endpoint with full request and response schemas
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/getting-started/troubleshooting">
+    Resolve common issues with ingestion, sessions, and publishing
+  </Card>
+</CardGroup>

@@ -1,0 +1,82 @@
+---
+title: Product overview
+description: Understand the core entities, operational workflow, and lifecycle states in RAGler.
+---
+
+RAGler is built around a structured pipeline that keeps humans in control of every chunk of knowledge before it reaches a vector database. This page explains the four core entities and the lifecycle that connects them.
+
+## Core entities
+
+<CardGroup cols={2}>
+  <Card title="Source" icon="file-import">
+    Raw content from manual input, a web URL, or a file upload. A source is the starting point for every ingestion.
+  </Card>
+  <Card title="Session" icon="clock">
+    A draft workspace stored in Redis. Sessions hold the extracted content and any generated or edited chunks before publication.
+  </Card>
+  <Card title="Chunk" icon="scissors">
+    The atomic unit of knowledge — a discrete piece of text with metadata, type, tags, and heading context. Chunks are what get embedded and stored in Qdrant.
+  </Card>
+  <Card title="Collection" icon="database">
+    A named, published context in Qdrant. Collections hold the final, reviewed chunks that power search and retrieval.
+  </Card>
+</CardGroup>
+
+## The full workflow
+
+<Steps>
+  <Step title="Ingest a source">
+    Send content to one of the three ingest endpoints — `POST /api/ingest/web`, `POST /api/ingest/manual`, or `POST /api/ingest/file`. RAGler extracts the text and creates a new draft **session** in Redis. The response contains a `sessionId`.
+  </Step>
+  <Step title="Generate and edit chunks">
+    Call `POST /api/session/:id/chunks` to run LLM-powered chunking on the session content. Inspect the resulting chunks and refine them: split, merge, edit text, or add new chunks manually.
+  </Step>
+  <Step title="Preview">
+    Call `POST /api/session/:id/preview` to lock the session and validate all chunks. Preview shows exactly what will be published and reports any warnings.
+  </Step>
+  <Step title="Publish to a collection">
+    Call `POST /api/session/:id/publish` with a `targetCollectionId`. RAGler atomically replaces any existing chunks from this source in Qdrant with the reviewed set, generates embeddings, and marks the session as published.
+  </Step>
+  <Step title="Search published knowledge">
+    Query your collection with the search endpoint or the built-in chat playground. All published chunks are immediately searchable via vector similarity.
+  </Step>
+</Steps>
+
+## Session lifecycle states
+
+Every session moves through a defined set of states:
+
+| State | Description |
+|-------|-------------|
+| `DRAFT` | Session created; source content extracted but not yet chunked. |
+| `CHUNKED` | Chunks generated (via LLM or character method). Editing is allowed. |
+| `PREVIEWING` | Session locked for validation. No further edits are permitted until publish completes. |
+| `PUBLISHED` | Chunks committed to a Qdrant collection. Session is read-only. |
+
+<Note>
+  Sessions are stored in Redis with a TTL. Published sessions are retained for lineage purposes but cannot be re-edited. Create a new ingest session to update content in a collection.
+</Note>
+
+## Storage model
+
+| Store | Contents | Lifecycle |
+|-------|----------|-----------|
+| **Redis** | Draft sessions and their chunks | Temporary; cleared after publication or expiry |
+| **Qdrant** | Published chunks with vector embeddings and `doc.*` metadata | Persistent; atomically replaced on re-publish |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Ingestion" icon="arrow-down-to-line" href="/product/ingestion">
+    Learn the three ingest endpoints and their request parameters
+  </Card>
+  <Card title="Sessions" icon="list-check" href="/product/sessions">
+    Manage draft sessions, generate and edit chunks, and preview before publishing
+  </Card>
+  <Card title="Publishing" icon="upload" href="/product/publishing">
+    Understand atomic replacement and the publish flow
+  </Card>
+  <Card title="Collections" icon="folder" href="/product/collections">
+    Create collections and edit published chunks directly
+  </Card>
+</CardGroup>

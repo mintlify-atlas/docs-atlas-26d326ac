@@ -1,0 +1,126 @@
+---
+title: Collection module
+description: Collection CRUD, published chunk editing, and the collection agent in RAGler.
+---
+
+The Collection module manages knowledge collections and provides direct editing of published chunks through the Collection Editor. It owns the Qdrant `kb_{collectionId}` collections and the `sys_registry` registry collection.
+
+## Responsibilities
+
+- Create, list, read, and delete collections.
+- List, create, update, delete, split, and merge published chunks directly in Qdrant.
+- Reorder chunks and update quality scores.
+- Provide document lineage summaries aggregated from chunk-level metadata.
+- Expose an AI collection agent for natural-language operations on the collection.
+
+## Key services
+
+### `CollectionService`
+
+Manages collection records in the `sys_registry` Qdrant collection.
+
+```typescript
+class CollectionService {
+  // Ensure the sys_registry collection exists (auto-creates if missing)
+  ensureRegistryExists(): Promise<void>
+
+  // Return all collections
+  findAll(): Promise<CollectionListResponseDto>
+
+  // Return a single collection by ID; throws NotFoundException if absent
+  findOne(id: string): Promise<CollectionResponseDto>
+
+  // Create a collection: registers in sys_registry + creates kb_{id} in Qdrant
+  create(dto: CreateCollectionDto, userId: string): Promise<CollectionResponseDto>
+
+  // Delete a collection: removes kb_{id} Qdrant collection + sys_registry entry
+  remove(id: string): Promise<void>
+}
+```
+
+`create` automatically provisions payload indexes on `doc.source_type`, `doc.source_id`, `chunk.type`, `chunk.lang`, and `tags` so filters are available immediately after the collection is created.
+
+### `ChunkService`
+
+Provides direct CRUD on published chunks inside a `kb_{collectionId}` collection.
+
+```typescript
+class ChunkService {
+  // Paginated, filtered, ordered list of chunks
+  listChunks(collectionId: string, query: ListChunksQuery): Promise<EditorChunkListResponse>
+
+  // Fetch a single chunk by Qdrant point ID
+  getChunk(collectionId: string, chunkId: string): Promise<EditorChunkResponse>
+
+  // Create a new chunk with fresh embedding; appends to end if position not supplied
+  createChunk(collectionId: string, dto: EditorCreateChunkInput, userId: string): Promise<EditorChunkResponse>
+
+  // Update chunk content and/or metadata; re-embeds only if content changed
+  updateChunk(collectionId: string, chunkId: string, dto: EditorUpdateChunkInput, userId: string): Promise<EditorChunkResponse>
+
+  // Delete a single chunk
+  deleteChunk(collectionId: string, chunkId: string, userId: string): Promise<void>
+
+  // Split one chunk into two or more; accepts character offsets or explicit text blocks
+  splitChunk(collectionId: string, chunkId: string, dto: EditorSplitChunkInput, userId: string): Promise<EditorChunkListResponse>
+
+  // Merge multiple chunks into one; sorts by position before joining
+  mergeChunks(collectionId: string, dto: EditorMergeChunksInput, userId: string): Promise<EditorChunkResponse>
+
+  // Update editor.position for a set of chunks
+  reorderChunks(collectionId: string, dto: ReorderChunksInput, userId: string): Promise<void>
+
+  // Set editor.quality_score and editor.quality_issues on a chunk
+  updateQualityScore(collectionId: string, chunkId: string, dto: UpdateQualityScoreInput, userId: string): Promise<EditorChunkResponse>
+
+  // Aggregate all points by doc.source_id and return document-level summaries
+  listDocuments(collectionId: string): Promise<DocumentListResponse>
+}
+```
+
+<Note>
+  `updateChunk` only calls the embedding API when the chunk text changes. Metadata-only updates use a partial payload update path, which is faster and does not consume OpenAI API quota.
+</Note>
+
+## ListChunksQuery filters
+
+`listChunks` supports the following query parameters for server-side filtering:
+
+| Parameter | Qdrant field | Type |
+|-----------|-------------|------|
+| `sourceType` | `doc.source_type` | keyword match |
+| `sourceId` | `doc.source_id` | keyword match |
+| `minQuality` | `editor.quality_score` | range gte |
+| `maxQuality` | `editor.quality_score` | range lte |
+| `tags` | `tags` | keyword match per tag (comma-separated) |
+| `search` | `chunk.text` | full-text match |
+| `sortBy` | `editor.position`, `editor.quality_score`, or `doc.last_modified_at` | order field |
+| `sortOrder` | `asc` or `desc` | direction |
+| `limit` / `offset` | — | pagination |
+
+## Dependencies
+
+```
+CollectionModule
+  ├── QdrantClientService  (infrastructure)
+  ├── LlmService           (embedding generation)
+  └── LlmModule            (forwardRef, for agent)
+```
+
+## Endpoints
+
+| Method | Path | Handler |
+|--------|------|---------|
+| `GET` | `/api/collections` | `CollectionController.findAll` |
+| `POST` | `/api/collections` | `CollectionController.create` |
+| `GET` | `/api/collections/:id` | `CollectionController.findOne` |
+| `DELETE` | `/api/collections/:id` | `CollectionController.remove` |
+| `GET` | `/api/collections/:id/chunks` | `ChunkController.listChunks` |
+| `POST` | `/api/collections/:id/chunks` | `ChunkController.createChunk` |
+| `GET` | `/api/collections/:id/chunks/:chunkId` | `ChunkController.getChunk` |
+| `PATCH` | `/api/collections/:id/chunks/:chunkId` | `ChunkController.updateChunk` |
+| `DELETE` | `/api/collections/:id/chunks/:chunkId` | `ChunkController.deleteChunk` |
+| `POST` | `/api/collections/:id/chunks/:chunkId/split` | `ChunkController.splitChunk` |
+| `POST` | `/api/collections/:id/chunks/merge` | `ChunkController.mergeChunks` |
+| `PUT` | `/api/collections/:id/chunks/reorder` | `CollectionReorderController.reorderChunks` |
+| `GET` | `/api/collections/:id/documents` | `ChunkController.listDocuments` |

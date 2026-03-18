@@ -1,0 +1,151 @@
+---
+title: Observability
+description: Structured log events, Prometheus-style metrics, and health check endpoints for RAGler.
+---
+
+RAGler is designed to be observable in production. All critical lifecycle transitions emit structured JSON log events. Prometheus-style metrics are defined for tracking throughput and latency across all layers.
+
+## Structured logging
+
+Logs are emitted as JSON objects via the NestJS `Logger`. Every log entry includes an `event` key that identifies the transition, plus contextual fields such as `sessionId`, `userId`, `collectionId`, `durationMs`, and error details.
+
+### Required log events
+
+<AccordionGroup>
+  <Accordion title="Ingest pipeline">
+    | Event | Level | Key fields |
+    |-------|-------|------------|
+    | `ingest_start` | INFO | `sessionId`, `userId`, `sourceType`, `method` |
+    | `chunking_start` | INFO | `sessionId`, `userId`, `sourceType`, `method` |
+    | `chunking_success` | INFO | `sessionId`, `userId`, `chunkCount`, `durationMs` |
+    | `chunking_failure` | ERROR | `sessionId`, `userId`, `durationMs`, `error` |
+    | `session_created` | INFO | `sessionId`, `userId`, `sourceType`, `sourceUrl`, `chunkCount` |
+  </Accordion>
+  <Accordion title="Session lifecycle">
+    | Event | Level | Key fields |
+    |-------|-------|------------|
+    | `session_retrieved` | INFO | `sessionId`, `status`, `chunkCount` |
+    | `session_not_found` | WARN | `sessionId` |
+    | `session_updated` | INFO | `sessionId`, `updatedFields` |
+    | `session_deleted` | INFO | `sessionId` |
+    | `session_delete_start` | INFO | `sessionId`, `userId` |
+    | `session_delete_success` | INFO | `sessionId`, `userId`, `previousStatus` |
+    | `chunk_updated` | INFO | `sessionId`, `chunkId` |
+    | `chunk_added` | INFO | `sessionId`, `chunkId` |
+    | `chunk_split` | INFO | `sessionId`, `originalChunkId`, `newChunkCount` |
+    | `chunks_merged` | INFO | `sessionId`, `mergedCount`, `newChunkId` |
+    | `preview_lock` | INFO | `sessionId`, `isValid`, `chunkCount` |
+    | `preview_validation_failed` | WARN | `sessionId`, `warnings`, `warningCount` |
+  </Accordion>
+  <Accordion title="Publish pipeline">
+    | Event | Level | Key fields |
+    |-------|-------|------------|
+    | `publish_start` | INFO | `sessionId`, `userId`, `collectionId` |
+    | `publish_delete_done` | INFO | `sessionId`, `sourceId`, `collectionId` |
+    | `publish_upsert_done` | INFO | `sessionId`, `collectionId`, `pointCount`, `typeDistribution` |
+    | `publish_success` | INFO | `sessionId`, `userId`, `collectionId`, `sourceId`, `publishedChunks`, `durationMs` |
+    | `publish_failure` | ERROR | `sessionId`, `userId`, `collectionId`, `durationMs`, `error`, `errorType` |
+  </Accordion>
+  <Accordion title="V2 chunking">
+    | Event | Level | Key fields |
+    |-------|-------|------------|
+    | `chunking_v2_start` | INFO | `correlationId`, `sourceId`, `sourceType`, `contentLength` |
+    | `chunking_v2_success` | INFO | `correlationId`, `chunkCount`, `typeDistribution`, `durationMs` |
+    | `chunking_v2_empty` | WARN | `correlationId`, `sourceId`, `sourceType` |
+    | `chunking_v2_failure` | ERROR | `correlationId`, `durationMs`, `errorType`, `errorMessage`, `isRetryable` |
+  </Accordion>
+  <Accordion title="Embedding">
+    | Event | Level | Key fields |
+    |-------|-------|------------|
+    | `embedding_batch_start` | INFO | `correlationId`, `textCount` |
+    | `embedding_batch_success` | INFO | `correlationId`, `durationMs` |
+    | `embedding_batch_failure` | ERROR | `correlationId`, `durationMs`, `errorType`, `errorMessage`, `isRetryable` |
+  </Accordion>
+  <Accordion title="Collection editor">
+    | Event | Level | Key fields |
+    |-------|-------|------------|
+    | `collections_listed` | INFO | `count` |
+    | `collection_created` | INFO | `collectionId`, `name`, `userId` |
+    | `collection_deleted` | INFO | `collectionId`, `name` |
+    | `collection_not_found` | WARN | `collectionId` |
+    | `chunk_created` | INFO | `collectionId`, `chunkId`, `userId`, `contentLength`, `durationMs` |
+    | `chunk_updated` | INFO | `collectionId`, `chunkId`, `userId`, `contentChanged`, `durationMs` |
+    | `chunk_deleted` | INFO | `collectionId`, `chunkId`, `userId` |
+    | `chunk_split` | INFO | `collectionId`, `originalChunkId`, `newChunkCount`, `userId`, `durationMs` |
+    | `chunks_merged` | INFO | `collectionId`, `mergedChunkIds`, `newChunkId`, `userId`, `durationMs` |
+    | `chunks_reordered` | INFO | `collectionId`, `chunkCount`, `userId`, `durationMs` |
+    | `chunk_quality_updated` | INFO | `collectionId`, `chunkId`, `score`, `issueCount`, `userId` |
+    | `documents_listed` | INFO | `collectionId`, `documentCount`, `totalChunks` |
+    | `search_complete` | INFO | `collectionId`, `resultCount`, `limit`, `filterApplied`, `durationMs` |
+  </Accordion>
+  <Accordion title="MCP server">
+    | Event | Level | Key fields |
+    |-------|-------|------------|
+    | `mcp_session_opened` | INFO | `sessionId` |
+    | `mcp_session_closed` | INFO | `sessionId` |
+    | `mcp_request_error` | ERROR | `error` |
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Never log secrets. The `OPENAI_API_KEY` and any user-supplied API key overrides must never appear in log output. The Settings module masks keys before storing them in response DTOs.
+</Note>
+
+## Prometheus metrics
+
+The following Prometheus-style counters, histograms, and gauges are the recommended metric set for a RAGler deployment. Instrument these via your preferred NestJS metrics middleware (e.g. `@willsoto/nestjs-prometheus`).
+
+### HTTP layer
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `http_server_requests_total` | Counter | `route`, `method`, `status` |
+| `http_server_request_duration_seconds` | Histogram | `route`, `method` |
+
+### Dependency calls
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `dependency_requests_total` | Counter | `dep` (redis/qdrant/openai), `op`, `status` |
+| `dependency_request_duration_seconds` | Histogram | `dep`, `op` |
+
+### LLM
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `llm_requests_total` | Counter | `scenario` (chunking/embedding/tagging/refine), `status` |
+| `llm_request_duration_seconds` | Histogram | `scenario` |
+
+### Publish operations
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `publish_operations_total` | Counter | `status` (success/failure) |
+
+### Draft sessions
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `draft_sessions_active` | Gauge | (none) |
+
+## Health check endpoints
+
+Two health endpoints are available for orchestration probes. See the [Health module](/architecture/modules/health) for full response shapes.
+
+| Endpoint | Purpose | Use as |
+|----------|---------|--------|
+| `GET /api/health/liveness` | Process alive | Kubernetes `livenessProbe` |
+| `GET /api/health/readiness` | Redis + Qdrant reachable | Kubernetes `readinessProbe` |
+| `GET /api/health` | Full health with details | Manual monitoring |
+
+## Recommended dashboard
+
+When building a monitoring dashboard, the following counters and queries provide a clear operational view:
+
+- **Ingest rate** — count of `ingest_start` events per minute, by `sourceType`
+- **Publish success/failure rate** — `publish_success` and `publish_failure` counts over time
+- **Publish latency p50/p95** — `durationMs` from `publish_success` events
+- **Search latency p50/p95** — `durationMs` from `search_complete` events
+- **Active draft sessions** — `draft_sessions_active` gauge
+- **LLM error rate** — `chunking_failure` + `embedding_batch_failure` counts
+- **Collection editor operations** — `chunk_created` + `chunk_updated` + `chunk_deleted` per collection

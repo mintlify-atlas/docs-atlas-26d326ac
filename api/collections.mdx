@@ -1,0 +1,589 @@
+---
+title: Collections
+description: Create and manage knowledge collections and their chunks via the REST API.
+---
+
+Collections are named knowledge bases that store published chunks in Qdrant. Each chunk belongs to exactly one collection.
+
+**Base path:** `/api/collections`
+
+**Required header:** `X-User-ID`
+
+---
+
+## List all collections
+
+```http
+GET /api/collections
+```
+
+Returns all collections registered in the system.
+
+```bash
+curl http://localhost:3000/api/collections \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`**
+
+```json
+{
+  "collections": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Product Docs",
+      "description": "Official product documentation",
+      "createdBy": "user-123",
+      "createdAt": "2024-01-15T10:00:00.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+<Expandable title="Response fields">
+  <ResponseField name="collections" type="array">
+    Array of collection objects.
+  </ResponseField>
+  <ResponseField name="collections[].id" type="string">
+    Collection UUID.
+  </ResponseField>
+  <ResponseField name="collections[].name" type="string">
+    Human-readable name (max 100 characters).
+  </ResponseField>
+  <ResponseField name="collections[].description" type="string">
+    Optional description (max 500 characters).
+  </ResponseField>
+  <ResponseField name="collections[].createdBy" type="string">
+    User ID of the creator.
+  </ResponseField>
+  <ResponseField name="collections[].createdAt" type="string">
+    ISO-8601 creation timestamp.
+  </ResponseField>
+  <ResponseField name="total" type="number">
+    Total number of collections.
+  </ResponseField>
+</Expandable>
+
+---
+
+## Get a collection
+
+```http
+GET /api/collections/:id
+```
+
+<ParamField path="id" type="string" required>
+  Collection UUID.
+</ParamField>
+
+```bash
+curl http://localhost:3000/api/collections/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`** — a single collection object (same shape as list items above).
+
+**Response `404`** — collection not found.
+
+---
+
+## Create a collection
+
+```http
+POST /api/collections
+```
+
+<ParamField body="name" type="string" required>
+  Display name for the collection. Min 1, max 100 characters.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional description. Max 500 characters.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/collections \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "name": "Product Docs",
+    "description": "Official product documentation"
+  }'
+```
+
+**Response `201`** — the created collection object.
+
+---
+
+## Delete a collection
+
+```http
+DELETE /api/collections/:id
+```
+
+<ParamField path="id" type="string" required>
+  Collection UUID.
+</ParamField>
+
+```bash
+curl -X DELETE http://localhost:3000/api/collections/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "X-User-ID: user-123"
+```
+
+**Response `204`** — no content.
+
+**Response `404`** — collection not found.
+
+---
+
+## List chunks in a collection
+
+```http
+GET /api/collections/:collectionId/chunks
+```
+
+Returns a paginated list of published chunks. Supports sorting and filtering.
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField query="limit" type="number">
+  Page size. Min 1, max 100. Default `20`.
+</ParamField>
+
+<ParamField query="offset" type="number">
+  Pagination offset. Default `0`.
+</ParamField>
+
+<ParamField query="sortBy" type="string">
+  Sort field. One of `position` | `created_at` | `quality_score`. Default `position`.
+</ParamField>
+
+<ParamField query="sortOrder" type="string">
+  Sort direction. One of `asc` | `desc`. Default `asc`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Full-text search filter (max 200 characters).
+</ParamField>
+
+<ParamField query="sourceType" type="string">
+  Filter by source type. One of `web` | `manual` | `file`.
+</ParamField>
+
+<ParamField query="sourceId" type="string">
+  Filter by source ID (MD5 hash of source URL).
+</ParamField>
+
+<ParamField query="minQuality" type="number">
+  Minimum quality score (0–100).
+</ParamField>
+
+<ParamField query="maxQuality" type="number">
+  Maximum quality score (0–100).
+</ParamField>
+
+<ParamField query="tags" type="string">
+  Comma-separated list of tags to filter by.
+</ParamField>
+
+```bash
+curl 'http://localhost:3000/api/collections/a1b2c3d4-e5f6-7890-abcd-ef1234567890/chunks?limit=10&sortBy=quality_score&sortOrder=desc' \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`**
+
+```json
+{
+  "chunks": [
+    {
+      "id": "chunk-uuid",
+      "content": "Chunk text content...",
+      "doc": {
+        "url": "https://example.com/page",
+        "title": "Example Page",
+        "source_type": "web",
+        "revision": 1
+      },
+      "chunk": {
+        "type": "knowledge",
+        "heading_path": ["Introduction", "Overview"],
+        "section": "Introduction > Overview",
+        "lang": "en"
+      },
+      "tags": ["authentication", "api"],
+      "editor": {
+        "last_edited_by": "user-123",
+        "last_edited_at": "2024-01-15T10:00:00.000Z"
+      }
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+---
+
+## Create a chunk
+
+```http
+POST /api/collections/:collectionId/chunks
+```
+
+Create a new chunk directly in the collection without going through a session.
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField body="content" type="string" required>
+  Chunk text content. Min 1, max 10,000 characters.
+</ParamField>
+
+<ParamField body="chunkType" type="string">
+  Chunk type. One of `knowledge` | `navigation` | `table_row` | `glossary` | `faq` | `code`. Default `knowledge`.
+</ParamField>
+
+<ParamField body="headingPath" type="array">
+  Array of heading strings representing the document hierarchy.
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Topic tags. Max 12 tags, each max 50 characters.
+</ParamField>
+
+<ParamField body="position" type="number">
+  Zero-based position in the collection order. Optional.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/collections/a1b2c3d4-e5f6-7890-abcd-ef1234567890/chunks \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "content": "RAGler is a human-in-the-loop RAG platform.",
+    "chunkType": "knowledge",
+    "headingPath": ["About"],
+    "tags": ["overview", "rag"]
+  }'
+```
+
+**Response `201`** — the created chunk object.
+
+---
+
+## Get a chunk
+
+```http
+GET /api/collections/:collectionId/chunks/:chunkId
+```
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField path="chunkId" type="string" required>
+  Chunk UUID.
+</ParamField>
+
+```bash
+curl http://localhost:3000/api/collections/a1b2c3d4/chunks/chunk-uuid \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`** — single chunk object. **Response `404`** — chunk not found.
+
+---
+
+## Update a chunk
+
+```http
+PUT /api/collections/:collectionId/chunks/:chunkId
+```
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField path="chunkId" type="string" required>
+  Chunk UUID.
+</ParamField>
+
+<ParamField body="content" type="string">
+  Updated text content. Min 1, max 10,000 characters.
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Replacement tags list. Max 12 tags.
+</ParamField>
+
+<ParamField body="headingPath" type="array">
+  Replacement heading path.
+</ParamField>
+
+<ParamField body="chunkType" type="string">
+  Updated chunk type.
+</ParamField>
+
+```bash
+curl -X PUT http://localhost:3000/api/collections/a1b2c3d4/chunks/chunk-uuid \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "content": "Updated chunk content.",
+    "tags": ["updated", "rag"]
+  }'
+```
+
+**Response `200`** — updated chunk object. **Response `404`** — chunk not found.
+
+---
+
+## Delete a chunk
+
+```http
+DELETE /api/collections/:collectionId/chunks/:chunkId
+```
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField path="chunkId" type="string" required>
+  Chunk UUID.
+</ParamField>
+
+```bash
+curl -X DELETE http://localhost:3000/api/collections/a1b2c3d4/chunks/chunk-uuid \
+  -H "X-User-ID: user-123"
+```
+
+**Response `204`** — no content. **Response `404`** — chunk not found.
+
+---
+
+## Split a chunk
+
+```http
+POST /api/collections/:collectionId/chunks/:chunkId/split
+```
+
+Split a chunk into multiple parts. You must provide either `splitPoints` or `newTextBlocks`.
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField path="chunkId" type="string" required>
+  UUID of the chunk to split.
+</ParamField>
+
+<ParamField body="splitPoints" type="array">
+  Array of character positions at which to split the chunk text. Mutually exclusive with `newTextBlocks`.
+</ParamField>
+
+<ParamField body="newTextBlocks" type="array">
+  Explicit text blocks to replace the chunk (e.g. from an LLM-assisted split). Minimum 2 blocks. Mutually exclusive with `splitPoints`.
+</ParamField>
+
+<CodeGroup>
+```bash Split at character positions
+curl -X POST http://localhost:3000/api/collections/a1b2c3d4/chunks/chunk-uuid/split \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{"splitPoints": [150, 300]}'
+```
+
+```bash Split with explicit text blocks
+curl -X POST http://localhost:3000/api/collections/a1b2c3d4/chunks/chunk-uuid/split \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "newTextBlocks": [
+      "First part of the content.",
+      "Second part of the content."
+    ]
+  }'
+```
+</CodeGroup>
+
+**Response `200`** — `EditorChunkListResponse` with the newly created chunks.
+
+**Response `400`** — invalid split parameters (e.g. neither field provided).
+
+---
+
+## Merge chunks
+
+```http
+POST /api/collections/:collectionId/chunks/merge
+```
+
+Merge two or more chunks into a single chunk.
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField body="chunkIds" type="array" required>
+  Ordered list of chunk UUIDs to merge. Minimum 2 entries.
+</ParamField>
+
+<ParamField body="separator" type="string">
+  String to insert between merged chunk texts. Default `"\n\n"`.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/collections/a1b2c3d4/chunks/merge \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "chunkIds": ["chunk-uuid-1", "chunk-uuid-2"],
+    "separator": "\n\n"
+  }'
+```
+
+**Response `200`** — the merged chunk object.
+
+**Response `400`** — fewer than 2 chunk IDs provided.
+
+**Response `404`** — one or more chunks not found.
+
+---
+
+## Reorder chunks
+
+```http
+PUT /api/collections/:collectionId/reorder
+```
+
+Update the positions of multiple chunks in a single operation, used for retrieval optimization.
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField body="chunkPositions" type="array" required>
+  Array of `{ chunkId, position }` objects. At least 1 entry required.
+</ParamField>
+
+```bash
+curl -X PUT http://localhost:3000/api/collections/a1b2c3d4/reorder \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "chunkPositions": [
+      { "chunkId": "chunk-uuid-1", "position": 0 },
+      { "chunkId": "chunk-uuid-2", "position": 1 }
+    ]
+  }'
+```
+
+**Response `204`** — no content.
+
+**Response `404`** — one or more chunks not found.
+
+---
+
+## List documents in a collection
+
+```http
+GET /api/collections/:collectionId/documents
+```
+
+Returns all source documents aggregated from chunk-level metadata — useful for getting a summary view of what has been ingested into a collection.
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+```bash
+curl http://localhost:3000/api/collections/a1b2c3d4/documents \
+  -H "X-User-ID: user-123"
+```
+
+**Response `200`**
+
+```json
+{
+  "documents": [
+    {
+      "sourceId": "abc123md5hash",
+      "title": "Getting Started",
+      "sourceType": "web",
+      "sourceUrl": "https://example.com/getting-started",
+      "filename": null,
+      "mimeType": null,
+      "chunkCount": 12,
+      "avgQualityScore": 87.5,
+      "ingestDate": "2024-01-15T10:00:00.000Z",
+      "lastModifiedAt": "2024-01-15T10:00:00.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+## Chat with a collection
+
+```http
+POST /api/collections/:collectionId/chat
+```
+
+Send a message to the collection's AI assistant. Returns a grounded answer with citations from published chunks.
+
+<ParamField path="collectionId" type="string" required>
+  Collection UUID.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  User message. Min 1, max 5,000 characters.
+</ParamField>
+
+<ParamField body="sessionId" type="string">
+  Optional conversation session ID for multi-turn chat history.
+</ParamField>
+
+```bash
+curl -X POST http://localhost:3000/api/collections/a1b2c3d4/chat \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-123" \
+  -d '{
+    "message": "What is the authentication method for the API?"
+  }'
+```
+
+**Response `200`**
+
+```json
+{
+  "answer": "The API uses an X-User-ID header for authentication...",
+  "sessionId": "conv-session-uuid",
+  "citations": [
+    {
+      "chunkId": "chunk-uuid",
+      "content": "X-User-ID header is required on all requests...",
+      "score": 0.92
+    }
+  ]
+}
+```
+
+<ResponseField name="answer" type="string">
+  Generated answer grounded in the collection's knowledge.
+</ResponseField>
+
+<ResponseField name="sessionId" type="string">
+  Conversation session ID. Pass this in subsequent requests for multi-turn conversations.
+</ResponseField>
+
+<ResponseField name="citations" type="array">
+  Source chunks used to generate the answer, with similarity scores.
+</ResponseField>

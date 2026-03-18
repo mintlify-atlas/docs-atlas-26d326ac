@@ -1,0 +1,123 @@
+---
+title: "RAGler Documentation"
+description: "The human-in-the-loop RAG knowledge operations platform — ingest, review, and publish knowledge chunks to a vector database."
+---
+
+## What is RAGler?
+
+RAGler is an open-source **RAG knowledge operations platform** that gives you full control over your retrieval-augmented generation pipeline. Unlike black-box solutions, RAGler puts humans in the loop — every chunk of knowledge is reviewed, edited, and approved before it reaches your vector database.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/getting-started/installation">
+    Get RAGler running locally in under 5 minutes with Docker
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/product/overview">
+    Learn the ingest → session → publish workflow
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the full REST API with real examples
+  </Card>
+  <Card title="MCP Server" icon="plug" href="/product/mcp-server">
+    Connect RAGler to Cursor, VS Code, and other AI-powered IDEs
+  </Card>
+</CardGroup>
+
+## How it works
+
+RAGler follows a structured pipeline that keeps you in control at every step:
+
+<Steps>
+  <Step title="Ingest">
+    Pull content from web URLs, uploaded files (PDF, DOCX, TXT, MD), or paste text manually. Each ingest creates a **draft session** in Redis.
+  </Step>
+  <Step title="Review & Edit">
+    Inspect AI-generated chunks in your session. Split, merge, rewrite, or add chunks manually. Every change is saved in the draft until you're ready.
+  </Step>
+  <Step title="Preview">
+    Lock the session and validate all chunks before committing. Preview shows exactly what will be published.
+  </Step>
+  <Step title="Publish">
+    Atomically write validated chunks to a **Qdrant vector collection**. Old chunks are replaced, embeddings are generated, and your knowledge base is live.
+  </Step>
+</Steps>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Human-in-the-loop" icon="user-check">
+    Every chunk passes through a review stage before reaching production. No surprise data quality issues.
+  </Card>
+  <Card title="Multi-source ingestion" icon="download">
+    Ingest from web URLs, PDF/DOCX/TXT/MD file uploads, or manual text entry.
+  </Card>
+  <Card title="AI-powered chunking" icon="brain">
+    OpenAI automatically splits and enriches content into typed, tagged chunks with metadata.
+  </Card>
+  <Card title="Qdrant vector store" icon="database">
+    Published knowledge is stored in Qdrant with full vector similarity search support.
+  </Card>
+  <Card title="Chat playground" icon="message">
+    Query your knowledge base with RAG-powered chat and get answers with source citations.
+  </Card>
+  <Card title="Built-in MCP server" icon="server">
+    Native Model Context Protocol server at `/mcp` for IDE integration with Cursor, VS Code, and more.
+  </Card>
+  <Card title="Collection agent" icon="robot">
+    AI agent that can generate chunks, clean collections, and answer questions about your knowledge base.
+  </Card>
+  <Card title="Feature flags" icon="toggle-on">
+    Toggle web ingest, file ingest, and AI agent independently via environment variables or the Settings UI.
+  </Card>
+</CardGroup>
+
+## Architecture at a glance
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Frontend   │────▶│   Backend    │────▶│    Qdrant    │
+│  (Next.js)   │     │  (NestJS)    │     │  (vectors)   │
+└──────────────┘     └──────┬───────┘     └──────────────┘
+                            │
+                     ┌──────┴───────┐
+                     │    Redis     │
+                     │  (sessions)  │
+                     └──────────────┘
+```
+
+| Component | Technology | Role |
+|-----------|-----------|------|
+| Frontend | Next.js 15, Tailwind CSS | User interface for all operations |
+| Backend API | NestJS 11 | REST API with Swagger, built-in MCP server |
+| Redis | Redis Alpine | Draft session storage with TTL |
+| Qdrant | Qdrant | Published chunk vectors + metadata |
+| OpenAI | OpenAI API | LLM chunking, embeddings, agent chat |
+
+## Prerequisites
+
+Before installing RAGler, ensure you have:
+
+- **Node.js** 20+
+- **pnpm** 9+
+- **Docker** (latest)
+- **OpenAI API key**
+
+<Note>
+  RAGler uses Docker to run Redis and Qdrant. You don't need to install these separately — `docker compose up -d redis qdrant` handles everything.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Clone, configure, and start RAGler locally
+  </Card>
+  <Card title="Configuration" icon="gear" href="/getting-started/configuration">
+    Set environment variables and feature flags
+  </Card>
+  <Card title="Your first collection" icon="folder-plus" href="/getting-started/first-collection">
+    Walk through the full ingest-to-publish workflow
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/getting-started/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

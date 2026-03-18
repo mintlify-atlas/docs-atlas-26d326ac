@@ -1,0 +1,115 @@
+---
+title: Settings module
+description: Agent configuration — LLM model selection and API key overrides — persisted in Redis.
+---
+
+The Settings module persists agent configuration in Redis and supplies the active model name and API key to the LLM module on each call. This allows model and key changes to take effect immediately without restarting the service.
+
+## Responsibilities
+
+- Store and retrieve agent settings from Redis under the key `settings:agent`.
+- Fall back to the `OPENAI_API_KEY` environment variable when no custom key is stored.
+- Mask API keys in all API responses (first 4 + last 4 characters visible).
+- Provide the list of supported OpenAI model IDs.
+- Supply `getEffectiveApiKey()` and `getEffectiveModel()` to `LlmService` at call time.
+
+## `SettingsService` methods
+
+```typescript
+class SettingsService {
+  // Return settings with masked API key for safe display
+  getAgentSettings(): Promise<AgentSettingsResponse>
+
+  // Persist model and/or API key changes; returns updated masked response
+  updateAgentSettings(dto: UpdateAgentSettingsDto): Promise<AgentSettingsResponse>
+
+  // Return the effective API key (Redis override or OPENAI_API_KEY env fallback)
+  getEffectiveApiKey(): Promise<string>
+
+  // Return the effective model name (Redis override or DEFAULT_MODEL)
+  getEffectiveModel(): Promise<string>
+}
+```
+
+## Storage
+
+Settings are stored in Redis as a JSON document under a fixed key with no TTL. They survive pod restarts without requiring a database migration.
+
+```
+Key:    settings:agent
+Value:  { "modelName": "gpt-5", "apiKey": null | "<key>" }
+TTL:    none
+```
+
+If the stored JSON fails Zod validation (e.g. due to a schema change), the service falls back to defaults:
+
+```typescript
+{
+  modelName: 'gpt-5',
+  apiKey:    null,       // uses OPENAI_API_KEY from environment
+}
+```
+
+## API key masking
+
+Keys are masked before being returned in any API response. For a key longer than 8 characters, the mask shows the first 4 and last 4 characters:
+
+```
+sk-proj-AbCdXxXxXxXxXxXxYzYz  →  sk-p****YzYz
+```
+
+Keys of 8 characters or fewer are fully masked as `****`.
+
+## Available models
+
+The `GET /api/settings/agent/models` endpoint returns the static list of supported model IDs. This list is defined in `settings.dto.ts` and is not fetched dynamically from the OpenAI API.
+
+<Tabs>
+  <Tab title="GPT-5 family">
+    | Model ID | Name | Description |
+    |----------|------|-------------|
+    | `gpt-5` | GPT-5 | Best for complex coding and agentic tasks |
+    | `gpt-5-mini` | GPT-5 Mini | Fast and cost-efficient |
+    | `gpt-5-nano` | GPT-5 Nano | Fastest in GPT-5 family |
+  </Tab>
+  <Tab title="Reasoning (o-series)">
+    | Model ID | Name | Description |
+    |----------|------|-------------|
+    | `o3` | o3 | Powerful reasoning — math, science, code |
+    | `o3-mini` | o3 Mini | Small reasoning model |
+    | `o4-mini` | o4 Mini | Fast reasoning — visual and coding |
+  </Tab>
+  <Tab title="GPT-4.1 family">
+    | Model ID | Name | Description |
+    |----------|------|-------------|
+    | `gpt-4.1` | GPT-4.1 | Strong non-reasoning model |
+    | `gpt-4.1-mini` | GPT-4.1 Mini | Balanced performance and cost |
+    | `gpt-4.1-nano` | GPT-4.1 Nano | Most affordable in 4.1 family |
+  </Tab>
+  <Tab title="GPT-4o (legacy)">
+    | Model ID | Name | Description |
+    |----------|------|-------------|
+    | `gpt-4o` | GPT-4o | Multimodal (legacy) |
+    | `gpt-4o-mini` | GPT-4o Mini | Affordable multimodal (legacy) |
+  </Tab>
+</Tabs>
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/settings/agent` | Return current settings with masked key |
+| `PATCH` | `/api/settings/agent` | Update model name or API key |
+| `GET` | `/api/settings/agent/models` | List available model IDs and descriptions |
+
+## Dependencies
+
+```
+SettingsModule
+  ├── RedisService     (settings persistence)
+  └── ConfigService    (OPENAI_API_KEY fallback)
+```
+
+<Warning>
+  The `settings:agent` Redis key has no TTL. Clearing Redis will reset the model and API key to defaults. Document this behaviour in your operational runbooks.
+</Warning>

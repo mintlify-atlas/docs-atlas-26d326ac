@@ -1,0 +1,160 @@
+---
+title: Chat Playground
+description: Query your published knowledge base using RAG-powered chat with citations and multi-turn conversation history.
+---
+
+The Chat Playground lets you ask questions against a published collection. Your message is embedded, matched against stored chunks, and passed to the LLM with the retrieved context. The response includes the generated answer, a session ID for conversation continuity, and citations that link back to the source chunks.
+
+## Endpoint
+
+```
+POST /api/collections/:collectionId/chat
+```
+
+<Note>
+  The collection must have published chunks before you can chat with it. Chunks in draft sessions are not searched.
+</Note>
+
+## How it works
+
+<Steps>
+  <Step title="Embed the query">
+    The user message is embedded using the configured OpenAI model.
+  </Step>
+  <Step title="Search published chunks">
+    The embedding is used to perform a semantic search against the collection's Qdrant index. The top 5 chunks are retrieved.
+  </Step>
+  <Step title="Build the RAG prompt">
+    Retrieved chunks are injected as `[Source N]` context into the system prompt. Up to 10 turns of conversation history are included for multi-turn sessions.
+  </Step>
+  <Step title="Call the LLM">
+    The LLM generates an answer grounded in the retrieved context at `temperature: 0.3`, with a maximum of 2,000 output tokens.
+  </Step>
+  <Step title="Return answer with citations">
+    The response includes the answer, a session ID, and a citations array referencing the source chunk IDs and relevance scores.
+  </Step>
+</Steps>
+
+## Request
+
+### Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Content-Type` | Yes | `application/json` |
+| `X-User-ID` | Yes | User identifier |
+
+### Body
+
+<ParamField body="message" type="string" required>
+  The question or prompt to send. Must be between 1 and 5,000 characters.
+</ParamField>
+
+<ParamField body="sessionId" type="string">
+  An existing session ID to continue a conversation. If omitted, a new session is created and returned in the response.
+</ParamField>
+
+## Response
+
+<ResponseField name="answer" type="string">
+  The LLM-generated answer, grounded in retrieved context. Uses `[Source N]` notation to reference cited chunks.
+</ResponseField>
+
+<ResponseField name="sessionId" type="string">
+  The session ID for this conversation. Pass this in subsequent requests to maintain conversation history.
+</ResponseField>
+
+<ResponseField name="citations" type="array">
+  Array of source chunks used to generate the answer.
+
+  <Expandable title="Citation object fields">
+    <ResponseField name="chunkId" type="string">
+      The ID of the source chunk in Qdrant.
+    </ResponseField>
+    <ResponseField name="content" type="string">
+      A preview of the chunk text (up to 500 characters).
+    </ResponseField>
+    <ResponseField name="score" type="number">
+      Semantic similarity score between the query and this chunk (0–1).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<Tabs>
+  <Tab title="First message">
+    Start a new conversation without a `sessionId`:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/chat \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{
+        "message": "How does authentication work in our system?"
+      }'
+    ```
+
+    Response:
+
+    ```json
+    {
+      "answer": "Authentication uses JWT tokens issued by the auth module. When a user logs in, the system verifies credentials and returns a signed token [Source 1]. Refresh tokens are stored separately and have a longer TTL [Source 2].",
+      "sessionId": "chat_e3a2b1c0-11d4-4f20-9a8e-2b3c4d5e6f7a",
+      "citations": [
+        {
+          "chunkId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "content": "The authentication module issues JWT tokens with a configurable expiry. Each token is signed with a secret key and contains the user ID and roles.",
+          "score": 0.92
+        },
+        {
+          "chunkId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+          "content": "Refresh tokens are long-lived credentials stored in Redis. When an access token expires, the client can exchange the refresh token for a new pair.",
+          "score": 0.87
+        }
+      ]
+    }
+    ```
+  </Tab>
+  <Tab title="Follow-up message">
+    Continue the conversation by passing the returned `sessionId`:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/chat \
+      -H "Content-Type: application/json" \
+      -H "X-User-ID: user-1" \
+      -d '{
+        "message": "What happens when the refresh token expires?",
+        "sessionId": "chat_e3a2b1c0-11d4-4f20-9a8e-2b3c4d5e6f7a"
+      }'
+    ```
+
+    The conversation history from the previous turn is included in the LLM prompt, so the model can resolve references like "it" or "that" correctly.
+  </Tab>
+</Tabs>
+
+## Multi-turn conversation
+
+Conversation history is stored in Redis under the `sessionId` key. Up to 10 turns (20 messages: 10 user + 10 assistant) are included in the LLM context on each request.
+
+<Tip>
+  Store the `sessionId` on the client after the first response and pass it on every subsequent request to the same conversation thread.
+</Tip>
+
+## Verifying the response
+
+- The response body contains `answer`, `sessionId`, and `citations`.
+- `citations[*].chunkId` values match chunk IDs that exist in the published collection.
+- Passing the same `sessionId` on a second request returns a response that is aware of the first question.
+- If the collection has no published chunks, the endpoint returns a 404.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Collection Agent" icon="robot" href="/product/collection-agent">
+    Use the AI agent for collection management: quality review, automated cleaning, and bulk operations.
+  </Card>
+  <Card title="Collections" icon="folder" href="/product/collections">
+    Manage knowledge collections and publish chunks.
+  </Card>
+</CardGroup>

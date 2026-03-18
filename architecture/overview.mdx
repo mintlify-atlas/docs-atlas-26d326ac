@@ -1,0 +1,109 @@
+---
+title: Architecture overview
+description: Runtime architecture, component diagram, and end-to-end data flow for RAGler.
+---
+
+RAGler is a human-in-the-loop (HITL) RAG knowledge operations platform. The backend is a stateless NestJS REST API. All mutable state lives in two external stores: **Redis** for in-progress draft sessions and **Qdrant** for published vector knowledge.
+
+## System diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       Client layer                          │
+│                  Next.js 16 / Tailwind 4                    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ REST (api/*)
+┌──────────────────────────▼──────────────────────────────────┐
+│                  Backend API (NestJS)                        │
+│                                                             │
+│  ┌─────────┐  ┌─────────┐  ┌───────────┐  ┌────────────┐  │
+│  │  Ingest │  │ Session │  │Collection │  │   Vector   │  │
+│  └────┬────┘  └────┬────┘  └─────┬─────┘  └─────┬──────┘  │
+│       │            │             │               │          │
+│  ┌────▼────┐  ┌────▼────┐  ┌────▼─────┐  ┌─────▼──────┐  │
+│  │   LLM   │  │   LLM   │  │   LLM    │  │  Qdrant    │  │
+│  └────┬────┘  └─────────┘  └──────────┘  └────────────┘  │
+│       │                                                     │
+│  ┌────▼────┐  ┌─────────┐  ┌───────────┐                  │
+│  │  Health │  │Settings │  │    MCP    │  ← port 3100     │
+│  └─────────┘  └─────────┘  └───────────┘                  │
+└──────────────────────────────────────────────────────────────┘
+         │                              │
+┌────────▼────────┐          ┌──────────▼───────────┐
+│   Redis Alpine  │          │  Qdrant (vector DB)  │
+│  Draft sessions │          │  Published knowledge │
+│     + TTL       │          │  + sys_registry      │
+└─────────────────┘          └─────────────────────-┘
+                                        │
+                              ┌─────────▼─────────┐
+                              │   OpenAI API      │
+                              │  text-embedding   │
+                              │  -3-small + GPT   │
+                              └───────────────────┘
+```
+
+## Components
+
+| Component | Technology | Role |
+|-----------|------------|------|
+| Frontend | Next.js 16, Tailwind CSS 4 | User interface for all HITL operations |
+| Backend API | NestJS | REST API on port 3000, Swagger at `/api/docs` |
+| MCP server | `@modelcontextprotocol/sdk` | IDE integration server on port 3100 at `/mcp` |
+| Redis | Redis Alpine | Draft session storage with TTL |
+| Qdrant | Qdrant | Published chunk vectors and collection registry (`sys_registry`) |
+| OpenAI | OpenAI API | Chunking (`gpt-*`), embeddings (`text-embedding-3-small`), tag extraction |
+
+## Data flow
+
+The following sequence describes the full lifecycle from ingestion to retrieval.
+
+<Steps>
+  <Step title="Ingest source content">
+    The client sends source content to one of the ingest endpoints (`POST /api/ingest/web`, `/api/ingest/manual`, or `/api/ingest/file`). The ingest module normalises the input, fetches or extracts the text via a strategy, calls the LLM to generate initial chunks, and writes a draft session to Redis.
+
+    The response is a `sessionId`.
+  </Step>
+
+  <Step title="Edit chunks (human-in-the-loop)">
+    The client reads the draft session (`GET /api/session/:id`) and presents chunks to the user. The user can edit text, split a chunk (`POST /api/session/:id/split/:chunkId`), merge chunks (`POST /api/session/:id/merge`), or add a new chunk.
+
+    Each mutation is written back to Redis. The session remains in `DRAFT` status.
+  </Step>
+
+  <Step title="Preview and validate">
+    `POST /api/session/:id/preview` locks the session into `PREVIEW` status, runs validation (empty chunk detection, chunk count), and returns warnings. No changes can be made to chunks in `PREVIEW` status.
+  </Step>
+
+  <Step title="Publish to Qdrant">
+    `POST /api/session/:id/publish` with a `targetCollectionId` triggers the publish pipeline:
+
+    1. Re-chunks the source content using the structured v2 chunker.
+    2. Generates embeddings for all chunks via `text-embedding-3-small`.
+    3. **Atomic replacement** — deletes all existing points for this `doc.source_id`, then upserts the new points.
+    4. Deletes the draft session from Redis.
+
+    The response contains `publishedChunks` count and `collectionId`.
+  </Step>
+
+  <Step title="Search published knowledge">
+    `POST /api/search` accepts a query string and optional filters. The vector module generates a query embedding, applies Qdrant filters (source type, chunk type, tags, date range), and returns ranked results with full `doc.*` and `chunk.*` metadata.
+  </Step>
+</Steps>
+
+<Note>
+  Embeddings are generated **before** the delete step during publish. If the OpenAI call fails, existing Qdrant data is preserved.
+</Note>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="System design" icon="layer-group" href="/architecture/system-design">
+    Module boundaries, storage model, and HITL design rationale.
+  </Card>
+  <Card title="Data model" icon="database" href="/architecture/data-model">
+    Redis session schema and Qdrant point payload schema.
+  </Card>
+  <Card title="Modules" icon="puzzle" href="/architecture/modules/ingest">
+    Per-module service interfaces and key methods.
+  </Card>
+</CardGroup>

@@ -1,0 +1,107 @@
+---
+title: Vector module
+description: Qdrant vector search, filter building, and navigation intent classification in RAGler.
+---
+
+The Vector module owns semantic search over published knowledge. It generates a query embedding, builds a Qdrant filter from the request parameters and an LLM-based navigation intent classifier, and returns ranked results with structured metadata.
+
+## Responsibilities
+
+- Accept search queries and translate them into Qdrant vector search calls.
+- Build Qdrant filter conditions from source type, chunk type, tag, and date-range filters.
+- Classify whether a query has navigation intent and conditionally exclude `navigation` chunk types.
+- Return results with full `doc.*` and `chunk.*` metadata.
+
+## `VectorService` methods
+
+```typescript
+class VectorService {
+  // Vector search over a collection with optional filters
+  search(dto: SearchRequestDto): Promise<SearchResponseDto>
+}
+```
+
+### `SearchRequestDto`
+
+```typescript
+interface SearchRequestDto {
+  collectionId: string;
+  query:        string;
+  limit?:       number;          // default 10
+  filters?: {
+    source_types?:      string[];          // filter by doc.source_type
+    chunk_types?:       string[];          // filter by chunk.type
+    tags?:              string[];          // filter by tags (any match)
+    date_range?: {
+      from?: string;  // ISO-8601, maps to doc.last_modified_at gte
+      to?:   string;  // ISO-8601, maps to doc.last_modified_at lte
+    };
+    exclude_navigation?: boolean;         // default true
+  };
+}
+```
+
+### `SearchResponseDto`
+
+```typescript
+interface SearchResponseDto {
+  results: SearchResultDto[];
+  total:   number;
+  query:   string;
+}
+
+interface SearchResultDto {
+  id:      string;
+  score:   number;        // cosine similarity from Qdrant
+  content: string;        // chunk.text
+  doc: {
+    url:         string;
+    title:       string | null;
+    source_type: string;
+    revision:    number | string;
+  };
+  chunk: {
+    type:         string;
+    heading_path: string[];
+    section:      string | null;
+    lang:         string;
+  };
+  tags: string[];
+}
+```
+
+## Navigation intent filter
+
+By default, `navigation` chunks are excluded from search results. Before applying this exclusion, the service calls `NavigationIntentClassifier` (backed by `gpt-4o-mini`) to check whether the query itself is asking for navigation (e.g. "where is the settings page?"). If navigation intent is detected above a 0.6 confidence threshold, `navigation` chunks are included.
+
+If the classifier call fails, the safe default (exclude navigation) is applied and a `navigation_intent_classification_failed` warning is logged.
+
+## Filter precedence
+
+```
+Qdrant filter = {
+  must:     [ source_types, chunk_types, tags, date_range ],
+  must_not: [ navigation exclusion (if applicable) ]
+}
+```
+
+If no filter conditions are active the filter parameter is omitted entirely (better Qdrant performance).
+
+## Endpoint
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/search` | Vector search across a collection |
+
+## Dependencies
+
+```
+VectorModule
+  ├── QdrantClientService           (vector search + collection existence check)
+  ├── LlmService                    (query embedding)
+  └── NavigationIntentClassifier    (gpt-4o-mini, internal to VectorService)
+```
+
+<Note>
+  The `NavigationIntentClassifier` is instantiated directly in `VectorService` using the `openai.apiKey` config value, not via `SettingsService`. If you rotate the API key at runtime via the Settings API, you must restart the service for the Vector module to pick up the new key for intent classification.
+</Note>

@@ -1,0 +1,147 @@
+---
+title: Documents
+description: Browse published chunks grouped by source document, with chunk counts and quality aggregation.
+---
+
+Every chunk published to a collection carries `doc.*` metadata fields that record its origin. The documents endpoint aggregates this metadata at the source level, giving you a document-by-document view of what is in your collection.
+
+## Endpoint
+
+```
+GET /api/collections/:collectionId/documents
+```
+
+**Required header:** `X-User-ID: <your-user-id>`
+
+## How document lineage works
+
+When a session is published, each chunk is stored in Qdrant with a `doc.*` payload that captures its source:
+
+| Payload field | Description |
+|--------------|-------------|
+| `doc.url` | The canonical source URL (`upload://` for files, `manual://` for manual text) |
+| `doc.title` | Document or page title extracted during parsing |
+| `doc.source_type` | `web`, `manual`, or `file` |
+| `doc.revision` | Publish revision counter; increments on each re-publish of the same source |
+
+The `sourceId` — an MD5 hash of the source URL — is used as the grouping key. This means all chunks from the same source URL are associated with the same document, regardless of which session published them.
+
+<Note>
+  The `sourceId` is the MD5 hash of the source URL. This is also the key used during [atomic replacement](/product/publishing) — publishing a session with the same source URL replaces all previous chunks under that `sourceId`.
+</Note>
+
+## Example
+
+```bash
+curl http://localhost:3000/api/collections/<collectionId>/documents \
+  -H "X-User-ID: user-1"
+```
+
+## Response
+
+```json
+{
+  "documents": [
+    {
+      "sourceId": "a1b2c3d4",
+      "title": "API Authentication Guide",
+      "sourceType": "web",
+      "sourceUrl": "https://example.com/api-auth-guide",
+      "filename": null,
+      "mimeType": null,
+      "chunkCount": 8,
+      "avgQualityScore": 85.5,
+      "ingestDate": "2025-01-10T09:00:00.000Z",
+      "lastModifiedAt": "2025-01-15T14:30:00.000Z"
+    },
+    {
+      "sourceId": "f3e2d1c0",
+      "title": "onboarding-guide",
+      "sourceType": "file",
+      "sourceUrl": "upload://onboarding-guide.pdf",
+      "filename": "onboarding-guide.pdf",
+      "mimeType": "application/pdf",
+      "chunkCount": 24,
+      "avgQualityScore": 91.0,
+      "ingestDate": "2025-01-12T14:00:00.000Z",
+      "lastModifiedAt": "2025-01-12T14:00:00.000Z"
+    }
+  ],
+  "total": 2
+}
+```
+
+## Response fields
+
+<ResponseField name="documents" type="array">
+  Array of document summary objects, one per unique source.
+</ResponseField>
+
+<ResponseField name="documents[].sourceId" type="string">
+  MD5 hash of the source URL. Used as the grouping key across chunks.
+</ResponseField>
+
+<ResponseField name="documents[].title" type="string | null">
+  Document or page title extracted during parsing. `null` if no title was found.
+</ResponseField>
+
+<ResponseField name="documents[].sourceType" type="string">
+  Origin of the document: `web`, `manual`, or `file`.
+</ResponseField>
+
+<ResponseField name="documents[].sourceUrl" type="string">
+  The original source URL. For file uploads: `upload://<filename>`. For manual text: `manual://<sessionId>`.
+</ResponseField>
+
+<ResponseField name="documents[].filename" type="string | null">
+  Original filename. Only present for `file` source types; `null` otherwise.
+</ResponseField>
+
+<ResponseField name="documents[].mimeType" type="string | null">
+  MIME type of the source file (e.g., `application/pdf`, `text/markdown`). Only present for `file` sources; `null` otherwise.
+</ResponseField>
+
+<ResponseField name="documents[].chunkCount" type="number">
+  Number of chunks from this document currently in the collection.
+</ResponseField>
+
+<ResponseField name="documents[].avgQualityScore" type="number | null">
+  Average quality score (0–100) across all chunks from this document. `null` if no quality scores have been set.
+</ResponseField>
+
+<ResponseField name="documents[].ingestDate" type="string | null">
+  ISO 8601 timestamp of the first ingest of this source into the collection.
+</ResponseField>
+
+<ResponseField name="documents[].lastModifiedAt" type="string">
+  ISO 8601 timestamp of the most recent modification to any chunk from this document.
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of distinct source documents in the collection.
+</ResponseField>
+
+## Using quality scores
+
+Quality scores on individual chunks are set via the [collection editor](/product/collections) (`PUT /api/collections/:collectionId/chunks/:chunkId/quality`). The `avgQualityScore` in the documents response reflects the average across all chunks from that source, giving a quick signal of overall document quality.
+
+```bash
+curl -X PUT http://localhost:3000/api/collections/<collectionId>/chunks/<chunkId>/quality \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "score": 90,
+    "issues": []
+  }'
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Collections" icon="folder" href="/product/collections">
+    Manage chunks within a collection and edit them directly
+  </Card>
+  <Card title="Publishing" icon="upload" href="/product/publishing">
+    Understand atomic replacement and how doc metadata is written
+  </Card>
+</CardGroup>

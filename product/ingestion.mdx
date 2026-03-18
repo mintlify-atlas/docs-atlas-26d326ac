@@ -1,0 +1,190 @@
+---
+title: Ingestion
+description: Use the three ingest endpoints to start a draft session from a web URL, manual text, or file upload.
+---
+
+Every RAGler workflow starts with ingestion. Sending content to an ingest endpoint creates a **draft session** in Redis and returns a `sessionId` you use for all subsequent operations.
+
+All three endpoints accept the optional `chunkingConfig` parameter — see [Configurable chunking](/product/configurable-chunking).
+
+## Authentication
+
+All ingest endpoints require the `X-User-ID` header.
+
+```
+X-User-ID: <your-user-id>
+```
+
+## Endpoints
+
+<CardGroup cols={3}>
+  <Card title="POST /api/ingest/web" icon="globe">
+    Fetch and ingest content from a public web URL
+  </Card>
+  <Card title="POST /api/ingest/manual" icon="keyboard">
+    Ingest raw text content directly
+  </Card>
+  <Card title="POST /api/ingest/file" icon="file-arrow-up">
+    Upload a file (PDF, DOCX, TXT, MD, CSV, HTML)
+  </Card>
+</CardGroup>
+
+---
+
+## POST /api/ingest/web
+
+Fetch a web page and ingest its content into a new draft session. Requires the `webIngest` feature flag to be enabled.
+
+### Request parameters
+
+<ParamField body="url" type="string" required>
+  A valid URL to fetch. Must include the scheme (e.g., `https://`).
+</ParamField>
+
+<ParamField body="chunkingConfig" type="object">
+  Optional chunking configuration. See [Configurable chunking](/product/configurable-chunking) for all fields.
+</ParamField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3000/api/ingest/web \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "url": "https://example.com/docs/getting-started"
+  }'
+```
+
+With custom chunking:
+
+```bash
+curl -X POST http://localhost:3000/api/ingest/web \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "url": "https://example.com/docs/getting-started",
+    "chunkingConfig": {
+      "method": "character",
+      "chunkSize": 800,
+      "overlap": 100
+    }
+  }'
+```
+
+---
+
+## POST /api/ingest/manual
+
+Ingest plain text content directly without fetching from a URL. Useful for pasting documentation, notes, or any text you want to chunk and publish.
+
+### Request parameters
+
+<ParamField body="content" type="string" required>
+  The raw text to ingest. Minimum 1 character, maximum 100 KB (102,400 characters).
+</ParamField>
+
+<ParamField body="chunkingConfig" type="object">
+  Optional chunking configuration. See [Configurable chunking](/product/configurable-chunking) for all fields.
+</ParamField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3000/api/ingest/manual \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user-1" \
+  -d '{
+    "content": "RAGler is a human-in-the-loop knowledge operations platform. It allows teams to ingest, review, and publish knowledge chunks to a vector database."
+  }'
+```
+
+---
+
+## POST /api/ingest/file
+
+Upload a file as `multipart/form-data`. See [File upload](/product/file-upload) for full details including supported formats and size limits.
+
+### Example
+
+```bash
+curl -X POST http://localhost:3000/api/ingest/file \
+  -H "X-User-ID: user-1" \
+  -F "file=@./document.pdf"
+```
+
+---
+
+## Response
+
+All ingest endpoints return the same response shape.
+
+```json
+{
+  "sessionId": "abc-123",
+  "sourceType": "web",
+  "sourceUrl": "https://example.com/docs/getting-started",
+  "status": "created",
+  "createdAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+<ResponseField name="sessionId" type="string">
+  The unique identifier of the created draft session. Store this — you need it for all session operations.
+</ResponseField>
+
+<ResponseField name="sourceType" type="string">
+  One of `web`, `manual`, or `file`.
+</ResponseField>
+
+<ResponseField name="sourceUrl" type="string">
+  The canonical URL of the source. For file uploads this is `upload://<filename>`, for manual it is `manual://<sessionId>`.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Always `created` immediately after ingestion.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of session creation.
+</ResponseField>
+
+## Steps
+
+<Steps>
+  <Step title="Choose a source type">
+    Pick `web`, `manual`, or `file` depending on where your content lives.
+  </Step>
+  <Step title="Send the request with X-User-ID">
+    Include the `X-User-ID` header in every request. This associates the session and eventually the published chunks with the user.
+  </Step>
+  <Step title="Store the sessionId">
+    The `sessionId` from the response is your handle for all session operations — generating chunks, editing, previewing, and publishing.
+  </Step>
+  <Step title="Move to session operations">
+    Use `GET /api/session/:id` to inspect the created session and `POST /api/session/:id/chunks` to generate chunks.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| Web fetch timeout | The target URL took too long to respond | Tune `WEB_FETCH_TIMEOUT` in your environment configuration |
+| `webIngest` feature disabled | Feature flag is off | Enable `FEATURE_WEB_INGEST=true` in your `.env` |
+| `fileIngest` feature disabled | Feature flag is off | Enable `FEATURE_FILE_INGEST=true` in your `.env` |
+| Content too large | Manual content exceeds 100 KB | Split the content and create multiple sessions |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="File upload" icon="file" href="/product/file-upload">
+    Supported formats, size limits, and multipart upload details
+  </Card>
+  <Card title="Configurable chunking" icon="sliders" href="/product/configurable-chunking">
+    Control how content is split with chunkingConfig
+  </Card>
+  <Card title="Sessions" icon="list-check" href="/product/sessions">
+    Work with the draft session returned by ingest
+  </Card>
+</CardGroup>

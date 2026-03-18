@@ -1,0 +1,266 @@
+---
+title: Collection Agent
+description: An AI agent with direct tool access to search, inspect, and modify chunks within a collection — streamed in real time via SSE.
+---
+
+The Collection Agent is an AI assistant backed by the Vercel AI SDK `ToolLoopAgent`. Unlike the [Chat Playground](/product/chat-playground), which is read-only RAG, the agent has write access to collection chunks and can perform quality review, bulk edits, and automated maintenance through natural language.
+
+<Note>
+  The agent feature is behind the `agent` feature flag. Ensure it is enabled in your environment before calling these endpoints.
+</Note>
+
+## What the agent can do
+
+<CardGroup cols={2}>
+  <Card title="Search and inspect" icon="magnifying-glass">
+    Semantic search, scroll through chunks, read individual chunks by ID, and count collection contents.
+  </Card>
+  <Card title="Edit chunks" icon="pen-to-square">
+    Update chunk payload fields, upsert new chunks with generated embeddings, or delete chunks by filter.
+  </Card>
+  <Card title="Score quality" icon="star">
+    Use an LLM-based scoring tool to evaluate chunk quality and identify low-quality content.
+  </Card>
+  <Card title="Clean collections" icon="broom">
+    Automatically scan for and remove junk chunks: HTML-only content, whitespace, base64 blobs, JSON data dumps, and chunks that are too short.
+  </Card>
+</CardGroup>
+
+## Agent tools
+
+The agent has access to the following internal tools. These are not HTTP endpoints — they are called directly via NestJS dependency injection inside the agent loop.
+
+| Tool | Description |
+|------|-------------|
+| `list_collections` | List all Qdrant collections |
+| `scroll_chunks` | Page through chunks in a collection |
+| `search_chunks` | Semantic search within a collection |
+| `get_chunk_direct` | Fetch a single chunk by ID |
+| `count_chunks` | Count total chunks in a collection |
+| `update_chunk_payload` | Update fields in a chunk's Qdrant payload |
+| `delete_chunks` | Delete chunks by ID or filter |
+| `upsert_chunk` | Insert or replace a chunk with a new embedding |
+| `scan_next_dirty_chunk` | Find the next chunk that fails quality checks |
+| `score_chunk` | LLM-based quality score for a chunk |
+
+The agent runs for up to 30 tool iterations per request before stopping.
+
+## Endpoints
+
+### Chat
+
+```
+POST /api/collections/:collectionId/agent/chat
+POST /api/collections/:collectionId/agent/chat/sync
+```
+
+The streaming endpoint (`/chat`) returns Server-Sent Events. The synchronous endpoint (`/chat/sync`) waits for the full response and returns JSON.
+
+### Collection cleaning
+
+```
+POST /api/collections/:collectionId/agent/clean
+```
+
+Scans all chunks and removes junk in two passes: a fast heuristic pass followed by an LLM pass that strips HTML markup from content-rich chunks.
+
+### Session management
+
+```
+POST   /api/collections/:collectionId/agent/sessions
+GET    /api/collections/:collectionId/agent/sessions
+GET    /api/collections/:collectionId/agent/sessions/:sessionId
+PATCH  /api/collections/:collectionId/agent/sessions/:sessionId
+DELETE /api/collections/:collectionId/agent/sessions/:sessionId
+```
+
+### System prompts
+
+```
+GET    /api/collections/:collectionId/agent/prompts/global
+PATCH  /api/collections/:collectionId/agent/prompts/global
+DELETE /api/collections/:collectionId/agent/prompts/global
+GET    /api/collections/:collectionId/agent/prompt
+PATCH  /api/collections/:collectionId/agent/prompt
+DELETE /api/collections/:collectionId/agent/prompt
+```
+
+Global prompts apply to all collections. Collection-level prompts override the global prompt for a specific collection.
+
+## SSE event types
+
+Streaming endpoints emit the following event types as newline-delimited `data:` frames:
+
+| Event type | Description |
+|------------|-------------|
+| `thinking` | Agent has started reasoning |
+| `tool_call` | Agent invoked a tool (includes tool name and input) |
+| `tool_result` | Tool returned a result (includes tool name and output preview) |
+| `message` | Final or intermediate text response from the agent |
+| `dirty_chunk_found` | Cleaning: a junk chunk was identified (includes `chunkId`, `reason`, `preview`) |
+| `dirty_chunk_deleted` | Cleaning: the junk chunk was deleted |
+| `chunk_cleaned` | Cleaning: HTML was stripped from a chunk by the LLM pass |
+| `clean_progress` | Cleaning: page progress report (`scanned`, `total`) |
+| `clean_complete` | Cleaning: summary of the full run (`totalScanned`, `totalDeleted`, `totalCleaned`, `breakdown`) |
+| `error` | An error occurred |
+| `done` | Stream is complete |
+
+## Getting started
+
+<Steps>
+  <Step title="Create a session">
+    ```bash
+    curl -X POST http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/agent/sessions \
+      -H "Content-Type: application/json" \
+      -H "x-user-id: user-1" \
+      -d '{ "title": "Quality review" }'
+    ```
+
+    Response:
+
+    ```json
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "title": "Quality review",
+      "collectionId": "d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f",
+      "createdAt": "2026-03-18T10:00:00.000Z"
+    }
+    ```
+  </Step>
+
+  <Step title="Chat with the agent (streaming)">
+    ```bash
+    curl -X POST http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/agent/chat \
+      -H "Content-Type: application/json" \
+      -H "x-user-id: user-1" \
+      -d '{
+        "message": "Find chunks with quality issues and tell me how many there are",
+        "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      }'
+    ```
+
+    The response is a stream of SSE events:
+
+    ```
+    data: {"type":"thinking","timestamp":"2026-03-18T10:00:01.000Z"}
+
+    data: {"type":"tool_call","tool":"count_chunks","input":{"collection":"kb_d6e9f3a1"},"timestamp":"2026-03-18T10:00:01.200Z"}
+
+    data: {"type":"tool_result","tool":"count_chunks","output":"342","timestamp":"2026-03-18T10:00:01.400Z"}
+
+    data: {"type":"tool_call","tool":"scan_next_dirty_chunk","input":{"collection":"kb_d6e9f3a1"},"timestamp":"2026-03-18T10:00:01.600Z"}
+
+    data: {"type":"message","content":"I found 12 chunks with quality issues across the collection...","timestamp":"2026-03-18T10:00:03.000Z"}
+
+    data: {"type":"done","timestamp":"2026-03-18T10:00:03.100Z"}
+    ```
+  </Step>
+
+  <Step title="Chat with the agent (synchronous)">
+    Use the sync endpoint when you don't need streaming and just want the final response:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/agent/chat/sync \
+      -H "Content-Type: application/json" \
+      -H "x-user-id: user-1" \
+      -d '{
+        "message": "How many chunks are in this collection?",
+        "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      }'
+    ```
+
+    Response:
+
+    ```json
+    {
+      "response": "The collection currently contains 342 published chunks.",
+      "toolCalls": [
+        {
+          "tool": "count_chunks",
+          "input": { "collection": "kb_d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f" },
+          "output": "342"
+        }
+      ]
+    }
+    ```
+  </Step>
+</Steps>
+
+## Collection cleaning
+
+The clean endpoint performs a two-pass scan across all chunks:
+
+**Pass 1 — heuristic scan:** Removes chunks that match any of the following patterns:
+
+| Reason code | Description |
+|-------------|-------------|
+| `empty_payload` | Chunk has no text field |
+| `whitespace_only` | Text is blank after trimming |
+| `html_only` | Text is HTML markup with less than 20 characters of visible content |
+| `too_short` | Stripped text is under 50 characters |
+| `base64_blob` | Text contains a base64-encoded binary string (100+ characters) |
+| `json_blob` | Text is a raw JSON data dump (>15% key-value patterns) |
+
+**Pass 2 — LLM HTML cleaning:** Chunks with more than 20% HTML content by character count are passed to the LLM to extract clean plain text. The cleaned text replaces the original in Qdrant.
+
+```bash
+curl -X POST http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/agent/clean \
+  -H "x-user-id: user-1"
+```
+
+The endpoint streams SSE events. A `clean_complete` event is emitted when the run finishes:
+
+```json
+{
+  "type": "clean_complete",
+  "totalScanned": 342,
+  "totalDeleted": 18,
+  "totalCleaned": 7,
+  "remaining": 324,
+  "breakdown": {
+    "html_only": 9,
+    "too_short": 6,
+    "base64_blob": 3
+  },
+  "timestamp": "2026-03-18T10:05:00.000Z"
+}
+```
+
+## System prompt customization
+
+You can customize how the agent behaves by setting a system prompt at the global or collection level.
+
+<Tabs>
+  <Tab title="Set global prompt">
+    ```bash
+    curl -X PATCH http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/agent/prompts/global \
+      -H "Content-Type: application/json" \
+      -d '{ "prompt": "You are a strict technical editor. Focus on factual accuracy and conciseness." }'
+    ```
+  </Tab>
+  <Tab title="Set collection prompt">
+    ```bash
+    curl -X PATCH http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/agent/prompt \
+      -H "Content-Type: application/json" \
+      -d '{ "prompt": "This collection contains internal engineering docs. Be precise and use technical terminology." }'
+    ```
+  </Tab>
+  <Tab title="Reset to default">
+    ```bash
+    curl -X DELETE http://localhost:3000/api/collections/d6e9f3a1-22b4-4c10-8e7d-1a2b3c4d5e6f/agent/prompts/global
+    ```
+  </Tab>
+</Tabs>
+
+Collection-level prompts take precedence over the global prompt. Deleting the collection prompt reverts to the global prompt.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Chat Playground" icon="comments" href="/product/chat-playground">
+    Simple read-only RAG chat without agent capabilities.
+  </Card>
+  <Card title="MCP Server" icon="plug" href="/product/mcp-server">
+    Connect Cursor, VS Code, or any MCP-compatible client to your knowledge base.
+  </Card>
+</CardGroup>

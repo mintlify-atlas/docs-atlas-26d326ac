@@ -1,0 +1,121 @@
+---
+title: LLM module
+description: OpenAI integration for semantic chunking, embedding generation, and text refinement in RAGler.
+---
+
+The LLM module is the sole interface to the OpenAI API. It handles semantic chunking, structured v2 chunking with metadata enrichment, batch embedding generation, tag extraction, and text refinement. It never reads from or writes to Redis or Qdrant directly.
+
+## Responsibilities
+
+- Chunk raw text into semantically coherent draft chunks (`chunkContent`).
+- Chunk content into structured v2 payloads with heading hierarchy, chunk type, and LLM-extracted tags (`chunkContentV2`).
+- Generate 1536-dimensional embeddings for one or many texts (`generateEmbeddings`).
+- Provide text refinement for specific scenarios (simplify, clarify terms, add examples, rewrite for audience).
+- Read the effective model and API key from `SettingsService` on each call, enabling live key and model rotation without restart.
+
+## `LlmService` methods
+
+```typescript
+class LlmService {
+  // Simple LLM chunking — returns ChunkDto[] for session draft
+  chunkContent(content: string, correlationId?: string): Promise<ChunkDto[]>
+
+  // Structured chunking — returns full QdrantPayload[] ready for upsert
+  chunkContentV2(
+    content: string,
+    docMetadata: DocMetadata,
+    correlationId?: string
+  ): Promise<QdrantPayload[]>
+
+  // Batch embedding generation (all texts in one OpenAI call)
+  generateEmbeddings(texts: string[], correlationId?: string): Promise<number[][]>
+
+  // Single-text embedding (convenience wrapper)
+  generateEmbedding(text: string): Promise<number[]>
+
+  // Rewrite text according to a named scenario
+  refineText(text: string, scenario: RefineScenario, targetAudience?: string): Promise<string>
+}
+```
+
+## V2 chunking pipeline
+
+`chunkContentV2` runs a four-step pipeline entirely within the service:
+
+<Steps>
+  <Step title="Parse document structure">
+    For `manual` source type, the `MarkdownParser` parses the content into a tree of sections with heading levels and content. For `web` and `file` sources, a simple single-section structure is created from the raw content.
+  </Step>
+
+  <Step title="Structured chunking">
+    `StructuredChunker` walks the parsed structure and produces `ChunkInput[]` objects, each with `text`, `type`, and `headingPath`. Token budget is enforced: target 300 tokens, max 700, min 50.
+  </Step>
+
+  <Step title="Tag extraction (parallel)">
+    `LLMTagExtractor` runs in parallel across all chunks using `gpt-4o-mini`. Each call returns up to 12 topic tags for the chunk. All tag extraction calls are submitted concurrently via `Promise.all`.
+  </Step>
+
+  <Step title="Build QdrantPayload objects">
+    Each `ChunkInput` is assembled into a full `QdrantPayload` with a deterministic chunk ID (UUID derived from `source_id + content_hash`), SHA-256 content hash, detected language, ACL defaults, and the extracted tags.
+  </Step>
+</Steps>
+
+## Configuration
+
+All timeout and retry settings are read from the NestJS `ConfigService` at startup.
+
+| Config key | Default | Description |
+|------------|---------|-------------|
+| `llm.chunking.timeout` | `60000` ms | Timeout for a single chunking request |
+| `llm.chunking.maxRetries` | `2` | Automatic retries on transient failure |
+| `llm.chunking.maxContentLength` | `30000` chars | Window size before sliding-window mode activates |
+| `llm.embedding.timeout` | `30000` ms | Timeout for embedding batch request |
+| `llm.embedding.maxRetries` | `2` | Automatic retries on transient failure |
+| `llm.embedding.batchSize` | `100` | Maximum texts per embedding call |
+
+## Error types
+
+OpenAI SDK errors are mapped to typed domain errors before propagating:
+
+<AccordionGroup>
+  <Accordion title="Chunking errors">
+    | Error class | Cause | Retryable |
+    |-------------|-------|-----------|
+    | `LlmChunkingValidationError` | Empty or whitespace-only content | No |
+    | `LlmChunkingParseError` | Model refusal or invalid JSON response | No |
+    | `LlmChunkingRateLimitError` | OpenAI rate limit (`RateLimitError`) | Yes |
+    | `LlmChunkingTimeoutError` | `APIConnectionTimeoutError` | Yes |
+    | `LlmChunkingApiError` | All other OpenAI API errors | Depends on HTTP status |
+  </Accordion>
+  <Accordion title="Embedding errors">
+    | Error class | Cause | Retryable |
+    |-------------|-------|-----------|
+    | `LlmEmbeddingValidationError` | Empty text in batch | No |
+    | `LlmEmbeddingRateLimitError` | OpenAI rate limit | Yes |
+    | `LlmEmbeddingTimeoutError` | Connection timeout | Yes |
+    | `LlmEmbeddingApiError` | All other API errors | Depends on HTTP status |
+  </Accordion>
+</AccordionGroup>
+
+## Dependencies
+
+```
+LlmModule
+  ├── SettingsService   (effective API key + model at call time)
+  └── ConfigService     (timeout / retry configuration)
+```
+
+<Note>
+  `LlmService` creates a fresh `OpenAI` client instance on each request by calling `SettingsService.getEffectiveApiKey()`. This means API key and model changes via the Settings API take effect immediately without restarting the service.
+</Note>
+
+## Refinement scenarios
+
+The `refineText` method accepts a `RefineScenario` string:
+
+| Scenario | Behaviour |
+|----------|-----------|
+| `simplify` | Simplifies language while preserving meaning |
+| `clarify_terms` | Explains technical jargon in context |
+| `add_examples` | Augments the text with clarifying examples |
+| `rewrite_for_audience` | Rewrites for a specified target audience |
