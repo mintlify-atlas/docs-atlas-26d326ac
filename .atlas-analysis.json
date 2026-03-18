@@ -1,0 +1,132 @@
+{
+  "projectType": "saas",
+  "projectName": "RAGler",
+  "projectDescription": "An open-source human-in-the-loop RAG knowledge operations platform for ingesting, reviewing, and publishing knowledge chunks to a vector database.",
+  "theme": "sequoia",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "getting-started/installation",
+              "getting-started/configuration",
+              "getting-started/first-collection",
+              "getting-started/troubleshooting"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "product/overview",
+              "product/ingestion",
+              "product/file-upload",
+              "product/sessions",
+              "product/publishing",
+              "product/collections",
+              "product/configurable-chunking",
+              "product/documents"
+            ]
+          },
+          {
+            "group": "AI Features",
+            "pages": [
+              "product/chat-playground",
+              "product/collection-agent",
+              "product/mcp-server"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/system-design",
+              "architecture/data-model",
+              "architecture/modules/collection",
+              "architecture/modules/ingest",
+              "architecture/modules/session",
+              "architecture/modules/llm",
+              "architecture/modules/vector",
+              "architecture/modules/health",
+              "architecture/modules/settings",
+              "architecture/observability",
+              "architecture/security"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/releasing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/collections",
+              "api/ingest",
+              "api/session",
+              "api/search",
+              "api/health",
+              "api/mcp"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Human-in-the-loop chunk review and editing before publishing",
+    "Multi-source ingestion: web URLs, file uploads (PDF, DOCX), and manual text",
+    "Draft session workflow: ingest → review → preview → publish",
+    "AI-powered chunking, embeddings, and enrichment via OpenAI",
+    "Qdrant vector database for published knowledge storage",
+    "Built-in MCP server for IDE integration (Cursor, VS Code)",
+    "RAG-powered chat playground with citations",
+    "AI collection agent for chunk generation and collection cleaning",
+    "Configurable chunking parameters per ingestion",
+    "Feature flags for toggling web ingest, file ingest, and AI agent"
+  ],
+  "publicApiSurface": [
+    "GET /api/collections — list all collections",
+    "POST /api/collections — create a collection",
+    "GET /api/collections/:id — get collection details",
+    "DELETE /api/collections/:id — delete collection",
+    "GET/POST /api/collections/:id/chunks — manage collection chunks",
+    "POST /api/collections/:collectionId/chat — RAG-powered chat",
+    "POST /api/ingest/web — ingest from web URL",
+    "POST /api/ingest/manual — ingest from manual text",
+    "POST /api/ingest/file — ingest from file upload",
+    "GET /api/session — list all sessions",
+    "GET /api/session/:id — get session details",
+    "POST /api/session/:id/chunks — generate chunks via LLM",
+    "POST /api/session/:id/chunks/merge — merge chunks",
+    "POST /api/session/:id/chunks/:chunkId/split — split chunk",
+    "PATCH /api/session/:id/chunks/:chunkId — update chunk text",
+    "POST /api/session/:id/preview — lock and validate session",
+    "POST /api/session/:id/publish — publish chunks to collection",
+    "DELETE /api/session/:id — delete session",
+    "POST /api/search — vector similarity search",
+    "GET /api/health/liveness — liveness check",
+    "GET /api/health/readiness — readiness check (Redis + Qdrant)",
+    "POST /mcp — MCP Streamable HTTP endpoint",
+    "GET /sse + POST /messages — MCP legacy SSE endpoint"
+  ]
+}
